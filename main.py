@@ -148,7 +148,7 @@ async def handle_audio(message: types.Message, state: FSMContext):
             
             try:
                 # Записываем в Google Sheets
-                row_number = await write_to_google_sheets(response_text)
+                row_number = await write_to_google_sheets(transcript, response_text)
                 await message.reply(f"📝 Ответ записан в строку {row_number} таблицы")
                 
             except Exception as e:
@@ -168,37 +168,51 @@ async def handle_audio(message: types.Message, state: FSMContext):
 
 
 
-async def write_to_google_sheets(response_text: str) -> int:
-    """Записывает ответ в Google Sheets и возвращает номер строки"""
+async def write_to_google_sheets(transcription: str, ai_response: str) -> int:
+    """Записывает транскрипцию и ответ в Google Sheets и возвращает номер строки"""
     try:
-        # Получаем данные из .env
-        service_account_info = json.loads(os.getenv("GSHEETS_SERVICE_ACCOUNT_INFO"))
-        spreadsheet_id = os.getenv("GSHEETS_SPREADSHEET_ID")
-        sheet_name = os.getenv("GSHEETS_SHEET_NAME", "Sheet1")
-        
+        # Формируем данные для авторизации
+        creds_dict = {
+            "type": os.getenv("GS_TYPE"),
+            "project_id": os.getenv("GS_PROJECT_ID"),
+            "private_key_id": os.getenv("GS_PRIVATE_KEY_ID"),
+            "private_key": os.getenv("GS_PRIVATE_KEY").replace('\\n', '\n'),
+            "client_email": os.getenv("GS_CLIENT_EMAIL"),
+            "client_id": os.getenv("GS_CLIENT_ID"),
+            "auth_uri": os.getenv("GS_AUTH_URI"),
+            "token_uri": os.getenv("GS_TOKEN_URI"),
+            "auth_provider_x509_cert_url": os.getenv("GS_AUTH_PROVIDER_X509_CERT_URL"),
+            "client_x509_cert_url": os.getenv("GS_CLIENT_X509_CERT_URL"),
+            "universe_domain": os.getenv("UNIVERSE_DOMAIN", "googleapis.com")
+        }
+
         # Авторизация
         scope = ['https://spreadsheets.google.com/feeds',
                 'https://www.googleapis.com/auth/drive']
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(
-            service_account_info, scope)
-        client = gspread.authorize(creds)
-        
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        gc = gspread.authorize(creds)
+
         # Открываем таблицу
-        sheet = client.open_by_key(spreadsheet_id).worksheet(sheet_name)
-        
-        # Добавляем запись
-        row = [
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            response_text
+        spreadsheet = gc.open_by_key(os.getenv("GSHEETS_SPREADSHEET_ID"))
+        worksheet = spreadsheet.worksheet(os.getenv("GSHEETS_SHEET_NAME", "Sheet1"))
+
+        # Подготавливаем данные для записи
+        row_data = [
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),  # Колонка A: Дата
+            transcription,                                  # Колонка B: Транскрипция
+            ai_response                                     # Колонка C: Ответ
         ]
-        sheet.append_row(row)
-        
-        # Получаем номер последней строки
-        return len(sheet.get_all_values())
-    
+
+        # Добавляем новую строку
+        worksheet.append_row(row_data)
+
+        # Получаем номер последней заполненной строки
+        return len(worksheet.col_values(1))  # Считаем по колонке с датами
+
     except Exception as e:
-        print(f"Ошибка записи в Google Sheets: {e}")
-        raise
+        error_msg = f"Ошибка записи в Google Sheets: {str(e)}"
+        print(error_msg)
+        raise Exception(error_msg)
 
 
 async def main() -> None:
