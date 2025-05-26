@@ -4,19 +4,19 @@ FROM python:3.12-slim-bookworm
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 
-# Install system dependencies (добавлены ffmpeg и аудио-библиотеки)
+# Install system dependencies (исправленное форматирование)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libssl-dev \
     libffi-dev \
     curl \
-    ffmpeg \                    # Основной пакет для обработки аудио
-    libavcodec-dev \             # Доп. кодеки
-    libavformat-dev \            # Поддержка форматов
-    libswscale-dev \             # Обработка медиа
+    ffmpeg \
+    libavcodec-dev \
+    libavformat-dev \
+    libswscale-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Явно указываем пути к ffmpeg (опционально, но рекомендуется)
+# Явно указываем пути к ffmpeg
 ENV PATH="/usr/bin/ffmpeg:${PATH}"
 
 # Set the working directory
@@ -35,9 +35,8 @@ COPY . .
 # Expose the port the app runs on
 EXPOSE 8443
 
-# Фикс для pydub (явно указываем пути к бинарникам)
-RUN echo "AudioSegment.converter = \"/usr/bin/ffmpeg\"" >> /usr/local/lib/python3.12/site-packages/pydub/__init__.py && \
-    echo "AudioSegment.ffprobe = \"/usr/bin/ffprobe\"" >> /usr/local/lib/python3.12/site-packages/pydub/__init__.py
+# Фикс для pydub (без модификации системных файлов)
+RUN echo -e "from pydub import AudioSegment\nAudioSegment.converter = \"/usr/bin/ffmpeg\"\nAudioSegment.ffprobe = \"/usr/bin/ffprobe\"" > /app/ffmpeg_fix.py
 
 # Set the default command
 CMD ["python", "main.py"]
