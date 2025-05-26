@@ -21,7 +21,7 @@ import tempfile
 import aiofiles
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-GPT_TOKEN = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+client  = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(
     parse_mode=ParseMode.HTML))
@@ -43,19 +43,7 @@ class StateMiddleware(BaseMiddleware):
 
 
 
-async def transcribe_audio(file_path: str) -> str:
-    """Транскрибация аудио через OpenAI Whisper"""
-    try:
-        with open(file_path, "rb") as audio_file:
-            transcript = GPT_TOKEN.audio.transcriptions.create(
-                file=audio_file,
-                model="whisper-1",
-                language="ru"
-            )
-            return transcript.text
-    except Exception as e:
-        print(f"Ошибка транскрибации: {e}")
-        return None
+
 
 
 
@@ -100,56 +88,47 @@ async def convert_audio(input_path: str) -> str:
 
 @router.message(F.voice | F.audio | F.document, StateFilter(UserState.audio))
 async def handle_audio(message: types.Message):
-    temp_files = []
     try:
-        # Получаем файл
+        # Определяем тип файла
         if message.voice:
-            file_id = message.voice.file_id
+            file = await bot.get_file(message.voice.file_id)
             ext = "ogg"
         elif message.audio:
-            file_id = message.audio.file_id
+            file = await bot.get_file(message.audio.file_id)
             ext = "mp3"
         else:
-            file_id = message.document.file_id
+            if not message.document.mime_type.startswith('audio/'):
+                return await message.reply("❌ Пожалуйста, отправьте аудиофайл")
+            file = await bot.get_file(message.document.file_id)
             ext = os.path.splitext(message.document.file_name)[1][1:] or "mp3"
 
-        # Скачиваем файл (синхронно, чтобы избежать проблем с aiofiles)
-        file = await bot.get_file(file_id)
-        input_path = f"temp_{file_id}.{ext}"
+        # Скачиваем файл
+        input_path = f"temp_audio.{ext}"
         await bot.download(file, destination=input_path)
-        temp_files.append(input_path)
 
-        # Конвертируем в WAV
-        output_path = f"converted_{file_id}.wav"
-        try:
-            sound = AudioSegment.from_file(input_path, format=ext)
-            sound.export(output_path, format="wav")
-            temp_files.append(output_path)
-        except Exception as e:
-            await message.reply("❌ Ошибка конвертации аудио")
-            print(f"FFmpeg error: {e}")
-            return
+        # Конвертируем в WAV (если нужно)
+        output_path = "temp_audio.wav"
+        AudioSegment.from_file(input_path).export(output_path, format="wav")
 
         # Транскрибируем
         with open(output_path, "rb") as audio_file:
-            transcript = await GPT_TOKEN.audio.transcriptions.create(
+            transcript = client.audio.transcriptions.create(
                 file=audio_file,
                 model="whisper-1",
                 language="ru"
             )
             await message.reply(f"🔍 Текст:\n\n{transcript.text}")
 
-    except Exception as e:
-        await message.reply(f"❌ Ошибка обработки: {str(e)}")
-        print(f"Error: {e}")
-    finally:
         # Удаляем временные файлы
-        for path in temp_files:
-            try:
-                if path and os.path.exists(path):
-                    os.remove(path)
-            except Exception as e:
-                print(f"Error deleting {path}: {e}")
+        os.remove(input_path)
+        os.remove(output_path)
+
+    except Exception as e:
+        await message.reply(f"❌ Ошибка: {str(e)}")
+        # Удаляем файлы при ошибке (если они созданы)
+        for path in [input_path, output_path]:
+            if path and os.path.exists(path):
+                os.remove(path)
     
 
 async def main() -> None:
