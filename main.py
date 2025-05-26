@@ -27,7 +27,7 @@ router = Router()
 dp = Dispatcher(storage=storage)
 
 class UserState(StatesGroup):
-    welcome = State()
+    audio = State()
     ass_token = State()
     get = State()
 
@@ -74,7 +74,7 @@ async def transcribe_audio(audio_data: bytes) -> str | None:
 
 @router.message(CommandStart())
 async def command_start_handler(message: Message, state: FSMContext) -> None:
-    await state.set_state(UserState.welcome)
+    await state.set_state(UserState.ass_token)
     text = "👋 Добро пожаловать в наш чат-бот! Для начала нужен токен ассистента"
     await message.answer(f"{text}")
 
@@ -82,10 +82,11 @@ async def command_start_handler(message: Message, state: FSMContext) -> None:
 async def ass_token(message: Message, state: FSMContext):
     ass_token = message.text
     await state.update_data(ass_token=ass_token)
+    await state.set_state(UserState.audio)
     text = "Присылай аудио для оценки"
     await message.answer(f"{text}")
 
-@router.message(F.voice | F.audio | F.document)
+@router.message(F.voice | F.audio | F.document, StateFilter(UserState.audio))
 async def handle_audio(message: Message):
     file = await bot.get_file(
         message.voice.file_id if message.voice else (
