@@ -113,19 +113,38 @@ async def handle_audio(message: types.Message, state: FSMContext):
             await message.reply(f"Аудио обработано")
         
             state_data = await state.get_data()
-            assistant_id=state_data.get('ass_token')
-            assistant_response = client.beta.assistants.create_and_run(
-                assistant_id=assistant_id,
-                thread={
-                    "messages": [
-                        {"role": "user", "content": transcript.text}
-                    ]
-                }
+            assistant_id = state_data.get('ass_token')
+            
+            # Создаем тред и добавляем сообщение
+            thread = client.beta.threads.create()
+            client.beta.threads.messages.create(
+                thread_id=thread.id,
+                role="user",
+                content=transcript.text
             )
-
-        # Получаем ответ ассистента
-        response_text = assistant_response.choices[0].message.content
-        await message.reply(f"🤖 Ответ ассистента:\n\n{response_text}")
+            
+            # Запускаем ассистента
+            run = client.beta.threads.runs.create(
+                thread_id=thread.id,
+                assistant_id=assistant_id
+            )
+            
+            # Ожидаем завершения
+            while True:
+                run_status = client.beta.threads.runs.retrieve(
+                    thread_id=thread.id,
+                    run_id=run.id
+                )
+                if run_status.status == "completed":
+                    break
+                await asyncio.sleep(1)
+            
+            # Получаем ответ
+            messages = client.beta.threads.messages.list(thread_id=thread.id)
+            response_text = messages.data[0].content[0].text.value
+            
+            await message.reply(f"🤖 Ответ ассистента:\n\n{response_text}")
+        
         # Удаляем временные файлы
         os.remove(input_path)
         os.remove(output_path)
