@@ -19,6 +19,9 @@ from openai import OpenAI
 from pydub import AudioSegment  
 import tempfile
 import aiofiles
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+from datetime import datetime
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 client  = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -143,7 +146,13 @@ async def handle_audio(message: types.Message, state: FSMContext):
             messages = client.beta.threads.messages.list(thread_id=thread.id)
             response_text = messages.data[0].content[0].text.value
             
-            await message.reply(f"🤖 Ответ ассистента:\n\n{response_text}")
+            try:
+                # Записываем в Google Sheets
+                row_number = await write_to_google_sheets(response_text)
+                await message.reply(f"📝 Ответ записан в строку {row_number} таблицы")
+                
+            except Exception as e:
+                await message.reply(f"❌ Ошибка записи в таблицу: {str(e)}")
         
         # Удаляем временные файлы
         os.remove(input_path)
@@ -155,6 +164,41 @@ async def handle_audio(message: types.Message, state: FSMContext):
         for path in [input_path, output_path]:
             if path and os.path.exists(path):
                 os.remove(path)
+
+
+
+
+async def write_to_google_sheets(response_text: str) -> int:
+    """Записывает ответ в Google Sheets и возвращает номер строки"""
+    try:
+        # Получаем данные из .env
+        service_account_info = json.loads(os.getenv("GSHEETS_SERVICE_ACCOUNT_INFO"))
+        spreadsheet_id = os.getenv("GSHEETS_SPREADSHEET_ID")
+        sheet_name = os.getenv("GSHEETS_SHEET_NAME", "Sheet1")
+        
+        # Авторизация
+        scope = ['https://spreadsheets.google.com/feeds',
+                'https://www.googleapis.com/auth/drive']
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(
+            service_account_info, scope)
+        client = gspread.authorize(creds)
+        
+        # Открываем таблицу
+        sheet = client.open_by_key(spreadsheet_id).worksheet(sheet_name)
+        
+        # Добавляем запись
+        row = [
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            response_text
+        ]
+        sheet.append_row(row)
+        
+        # Получаем номер последней строки
+        return len(sheet.get_all_values())
+    
+    except Exception as e:
+        print(f"Ошибка записи в Google Sheets: {e}")
+        raise
 
 
 async def main() -> None:
