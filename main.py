@@ -100,8 +100,9 @@ async def convert_audio(input_path: str) -> str:
 
 @router.message(F.voice | F.audio | F.document, StateFilter(UserState.audio))
 async def handle_audio(message: types.Message):
+    temp_files = []
     try:
-        # Скачивание файла
+        # Получаем файл
         if message.voice:
             file_id = message.voice.file_id
             ext = "ogg"
@@ -112,32 +113,43 @@ async def handle_audio(message: types.Message):
             file_id = message.document.file_id
             ext = os.path.splitext(message.document.file_name)[1][1:] or "mp3"
 
+        # Скачиваем файл (синхронно, чтобы избежать проблем с aiofiles)
         file = await bot.get_file(file_id)
-        input_path = f"temp_audio.{ext}"
-        async with aiofiles.open(input_path, 'wb') as f:
-            await bot.download(file, destination=f)
+        input_path = f"temp_{file_id}.{ext}"
+        await bot.download(file, destination=input_path)
+        temp_files.append(input_path)
 
-        # Конвертация
-        converted_path = await convert_audio(input_path)
-        if not converted_path:
-            return await message.reply("❌ Ошибка обработки аудио")
+        # Конвертируем в WAV
+        output_path = f"converted_{file_id}.wav"
+        try:
+            sound = AudioSegment.from_file(input_path, format=ext)
+            sound.export(output_path, format="wav")
+            temp_files.append(output_path)
+        except Exception as e:
+            await message.reply("❌ Ошибка конвертации аудио")
+            print(f"FFmpeg error: {e}")
+            return
 
-        # Транскрибация
-        async with aiofiles.open(converted_path, 'rb') as audio_file:
-            transcript = await GPT_TOKEN.audio.transcriptions.create(
-                file=(os.path.basename(converted_path), await audio_file.read()),
+        # Транскрибируем
+        with open(output_path, "rb") as audio_file:
+            transcript = await client.audio.transcriptions.create(
+                file=audio_file,
                 model="whisper-1",
                 language="ru"
             )
-            await message.reply(f"🔍 Распознанный текст:\n\n{transcript.text}")
+            await message.reply(f"🔍 Текст:\n\n{transcript.text}")
 
     except Exception as e:
-        await message.reply(f"❌ Ошибка: {str(e)}")
+        await message.reply(f"❌ Ошибка обработки: {str(e)}")
+        print(f"Error: {e}")
     finally:
-        # Очистка
-        for path in [input_path, converted_path]:
-            if path and os.path.exists(path):
-                os.remove(path)
+        # Удаляем временные файлы
+        for path in temp_files:
+            try:
+                if path and os.path.exists(path):
+                    os.remove(path)
+            except Exception as e:
+                print(f"Error deleting {path}: {e}")
     
 
 async def main() -> None:
