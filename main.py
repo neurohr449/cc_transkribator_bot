@@ -168,11 +168,11 @@ async def handle_audio(message: types.Message, state: FSMContext):
 
 
 
-async def write_to_google_sheets(transcription: str, ai_response: str) -> int:
-    """Записывает транскрипцию и ответ в Google Sheets и возвращает номер строки"""
+async def write_to_google_sheets(transcription_text: str, ai_response: str) -> int:
+    """Записывает данные в Google Sheets и возвращает номер строки"""
     try:
-        # Формируем данные для авторизации
-        creds_dict = {
+        # Формируем данные для авторизации (используем сырые переменные из .env)
+        service_account_info = {
             "type": os.getenv("GS_TYPE"),
             "project_id": os.getenv("GS_PROJECT_ID"),
             "private_key_id": os.getenv("GS_PRIVATE_KEY_ID"),
@@ -187,9 +187,9 @@ async def write_to_google_sheets(transcription: str, ai_response: str) -> int:
         }
 
         # Авторизация
-        scope = ['https://spreadsheets.google.com/feeds',
+        scope = ['https://www.googleapis.com/auth/spreadsheets',
                 'https://www.googleapis.com/auth/drive']
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(service_account_info, scope)
         gc = gspread.authorize(creds)
 
         # Открываем таблицу
@@ -199,15 +199,15 @@ async def write_to_google_sheets(transcription: str, ai_response: str) -> int:
         # Подготавливаем данные для записи
         row_data = [
             datetime.now().strftime("%Y-%m-%d %H:%M:%S"),  # Колонка A: Дата
-            transcription,                                  # Колонка B: Транскрипция
-            ai_response                                     # Колонка C: Ответ
+            str(transcription_text),                        # Колонка B: Транскрипция (явное преобразование в str)
+            str(ai_response)                                # Колонка C: Ответ
         ]
 
-        # Добавляем новую строку
+        # Добавляем строку
         worksheet.append_row(row_data)
 
-        # Получаем номер последней заполненной строки
-        return len(worksheet.col_values(1))  # Считаем по колонке с датами
+        # Получаем номер последней строки
+        return len(worksheet.col_values(1))
 
     except Exception as e:
         error_msg = f"Ошибка записи в Google Sheets: {str(e)}"
