@@ -18,6 +18,7 @@ from aiogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup, C
 from openai import OpenAI
 from pydub import AudioSegment  
 import tempfile
+import aiofiles
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GPT_TOKEN = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -113,7 +114,8 @@ async def handle_audio(message: types.Message):
 
         file = await bot.get_file(file_id)
         input_path = f"temp_audio.{ext}"
-        await file.download_to_drive(input_path)
+        async with aiofiles.open(input_path, 'wb') as f:
+            await bot.download(file, destination=f)
 
         # Конвертация
         converted_path = await convert_audio(input_path)
@@ -121,12 +123,13 @@ async def handle_audio(message: types.Message):
             return await message.reply("❌ Ошибка обработки аудио")
 
         # Транскрибация
-        with open(converted_path, "rb") as audio_file:
-            transcript = await client.audio.transcriptions.create(
-                file=audio_file,
-                model="whisper-1"
+        async with aiofiles.open(converted_path, 'rb') as audio_file:
+            transcript = await GPT_TOKEN.audio.transcriptions.create(
+                file=(os.path.basename(converted_path), await audio_file.read()),
+                model="whisper-1",
+                language="ru"
             )
-            await message.reply(f"🔍 Текст: {transcript.text}")
+            await message.reply(f"🔍 Распознанный текст:\n\n{transcript.text}")
 
     except Exception as e:
         await message.reply(f"❌ Ошибка: {str(e)}")
