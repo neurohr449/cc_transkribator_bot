@@ -132,7 +132,7 @@ async def handle_audio(message: types.Message):
 
         # Транскрибируем
         with open(output_path, "rb") as audio_file:
-            transcript = await client.audio.transcriptions.create(
+            transcript = await GPT_TOKEN.audio.transcriptions.create(
                 file=audio_file,
                 model="whisper-1",
                 language="ru"
