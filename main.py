@@ -17,6 +17,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from openai import OpenAI
 from pydub import AudioSegment  
+import tempfile
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GPT_TOKEN = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -76,51 +77,64 @@ async def ass_token(message: Message, state: FSMContext):
 
 
 
-@router.message(F.voice | F.audio | F.document, (StateFilter(UserState.audio)))
-async def handle_audio(message: types.Message):
-    if message.voice:
-        file = await bot.get_file(message.voice.file_id)
-        ext = "ogg"  # Голосовые сообщения в Telegram всегда .ogg
-    elif message.audio:
-        file = await bot.get_file(message.audio.file_id)
-        ext = message.audio.mime_type.split("/")[-1]  # "audio/mp3" → "mp3"
-    elif message.document:
-        file = await bot.get_file(message.document.file_id)
-        ext = os.path.splitext(message.document.file_name)[1][1:]  # ".mp3" → "mp3"
-    else:
-        await message.reply("❌ Формат не поддерживается")
-        return
-
-     # Скачиваем файл
-    input_path = f"temp_audio.{ext}"
-    await bot.download_file(file.file_path, destination=input_path)
-
-    # Конвертируем в WAV (если нужно)
-    output_path = "temp_audio.wav"
+async def convert_audio(input_path: str) -> str:
+    """Конвертирует аудио в WAV с явными параметрами"""
+    output_path = os.path.join(tempfile.gettempdir(), "converted_audio.wav")
+    
     try:
-        audio = AudioSegment.from_file(input_path, format=ext)
-        audio.export(output_path, format="wav")
+        audio = AudioSegment.from_file(input_path)
+        audio.export(
+            output_path,
+            format="wav",
+            codec="pcm_s16le",
+            bitrate="128k",
+            parameters=["-ac", "1", "-ar", "16000"]
+        )
+        return output_path
     except Exception as e:
-        await message.reply(f"❌ Ошибка конвертации: {e}")
-        if os.path.exists(input_path):
-            os.remove(input_path)
-        return
+        print(f"Ошибка конвертации: {e}")
+        return None
 
-    # Транскрибируем
-    transcription = await transcribe_audio(output_path)
 
-    # Удаляем временные файлы
-    if os.path.exists(input_path):
-        os.remove(input_path)
-    if os.path.exists(output_path):
-        os.remove(output_path)
 
-    # Отправляем результат
-    if transcription:
-        await message.reply(f"Текст распознан")
-        print(transcription)
-    else:
-        await message.reply("❌ Не удалось распознать речь")
+@router.message(F.voice | F.audio | F.document, StateFilter(UserState.audio))
+async def handle_audio(message: types.Message):
+    try:
+        # Скачивание файла
+        if message.voice:
+            file_id = message.voice.file_id
+            ext = "ogg"
+        elif message.audio:
+            file_id = message.audio.file_id
+            ext = "mp3"
+        else:
+            file_id = message.document.file_id
+            ext = os.path.splitext(message.document.file_name)[1][1:] or "mp3"
+
+        file = await bot.get_file(file_id)
+        input_path = f"temp_audio.{ext}"
+        await file.download_to_drive(input_path)
+
+        # Конвертация
+        converted_path = await convert_audio(input_path)
+        if not converted_path:
+            return await message.reply("❌ Ошибка обработки аудио")
+
+        # Транскрибация
+        with open(converted_path, "rb") as audio_file:
+            transcript = await client.audio.transcriptions.create(
+                file=audio_file,
+                model="whisper-1"
+            )
+            await message.reply(f"🔍 Текст: {transcript.text}")
+
+    except Exception as e:
+        await message.reply(f"❌ Ошибка: {str(e)}")
+    finally:
+        # Очистка
+        for path in [input_path, converted_path]:
+            if path and os.path.exists(path):
+                os.remove(path)
     
 
 async def main() -> None:
