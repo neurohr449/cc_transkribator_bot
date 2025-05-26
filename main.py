@@ -42,14 +42,6 @@ class StateMiddleware(BaseMiddleware):
         return await handler(event, data)
 
 
-
-
-
-
-
-
-
-
 @router.message(CommandStart())
 async def command_start_handler(message: Message, state: FSMContext) -> None:
     await state.set_state(UserState.ass_token)
@@ -87,7 +79,8 @@ async def convert_audio(input_path: str) -> str:
 
 
 @router.message(F.voice | F.audio | F.document, StateFilter(UserState.audio))
-async def handle_audio(message: types.Message):
+async def handle_audio(message: types.Message, state: FSMContext):
+    await message.reply("Анализирую")
     try:
         # Определяем тип файла
         if message.voice:
@@ -117,8 +110,22 @@ async def handle_audio(message: types.Message):
                 model="whisper-1",
                 language="ru"
             )
-            await message.reply(f"🔍 Текст:\n\n{transcript.text}")
+            await message.reply(f"Аудио обработано")
+        
+            state_data = await state.get_data()
+            assistant_id=state_data.get('ass_token')
+            assistant_response = client.beta.assistants.create_and_run(
+                assistant_id=assistant_id,
+                thread={
+                    "messages": [
+                        {"role": "user", "content": transcript.text}
+                    ]
+                }
+            )
 
+        # Получаем ответ ассистента
+        response_text = assistant_response.choices[0].message.content
+        await message.reply(f"🤖 Ответ ассистента:\n\n{response_text}")
         # Удаляем временные файлы
         os.remove(input_path)
         os.remove(output_path)
@@ -129,7 +136,7 @@ async def handle_audio(message: types.Message):
         for path in [input_path, output_path]:
             if path and os.path.exists(path):
                 os.remove(path)
-    
+
 
 async def main() -> None:
     logging.basicConfig(level=logging.INFO, stream=sys.stdout)
