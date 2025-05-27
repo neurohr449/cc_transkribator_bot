@@ -159,7 +159,13 @@ async def handle_audio(message: types.Message, state: FSMContext):
         response_text = messages.data[0].content[0].text.value
         
         # Записываем в Google Sheets
-        row_number = await write_to_google_sheets(transcript.text, response_text, file_name, message.from_user.id)
+        row_number = await write_to_google_sheets(
+        transcription_text=transcript.text,
+        ai_response=response_text,
+        file_name=file_name,
+        username=message.from_user.username,  
+        state=state  
+        )
         await message.reply(f"📊 Результат записан в строку {row_number}")
 
     except Exception as e:
