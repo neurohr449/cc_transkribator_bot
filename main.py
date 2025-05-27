@@ -30,7 +30,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 MAX_FILE_SIZE = 24 * 1024 * 1024  # 24 МБ с запасом от лимита в 25 МБ
 CHUNK_DURATION = 300  # Длительность чанка в секундах (5 минут)
-DOWNLOAD_TIMEOUT = 300  # 5 минут для скачивания
+DOWNLOAD_TIMEOUT = 1200  # 5 минут для скачивания
 MAX_RETRIES = 3  # Количество попыток скачивания
 
 # Настройка сессии с увеличенным таймаутом
