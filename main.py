@@ -189,6 +189,8 @@ async def process_audio_file(file_path: str, file_name: str, message: types.Mess
 @router.message(F.voice | F.audio | F.document, StateFilter(UserState.audio))
 async def handle_audio(message: types.Message, state: FSMContext):
     unique_id = uuid.uuid4().hex
+    input_path = None
+    output_path = None  # Инициализируем переменную заранее
     
     try:
         # Определение типа файла и скачивание
@@ -210,25 +212,33 @@ async def handle_audio(message: types.Message, state: FSMContext):
         input_path = f"temp_{unique_id}.{ext}"
         await bot.download(file, destination=input_path)
         
+        # Проверка размера файла перед конвертацией
+        if os.path.getsize(input_path) > 100 * 1024 * 1024:  # 100MB лимит для сырого файла
+            os.remove(input_path)
+            return await message.reply("❌ Файл слишком большой. Максимальный размер: 100MB")
+
+        await message.reply("🔍 Начинаю обработку аудио...")
+        
         # Конвертируем в WAV
         output_path = await convert_audio(input_path)
         if not output_path:
             return await message.reply("❌ Ошибка конвертации аудио")
-        
+
         # Обработка файла
         row_number = await process_audio_file(output_path, file_name, message, state)
         await message.reply(f"✅ Результат записан в строку {row_number}")
         
     except Exception as e:
         await message.reply(f"❌ Ошибка: {str(e)}")
+        logging.exception("Ошибка обработки аудио")
     finally:
         # Гарантированная очистка временных файлов
         for path in [input_path, output_path]:
             if path and os.path.exists(path):
                 try:
                     os.remove(path)
-                except:
-                    pass
+                except Exception as e:
+                    logging.error(f"Ошибка удаления файла {path}: {e}")
 
 async def write_to_google_sheets(transcription_text: str, ai_response: str, file_name: str, username: str, state: FSMContext) -> int:
     """Записывает данные в Google Sheets и возвращает номер строки"""
