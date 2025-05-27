@@ -96,21 +96,21 @@ async def convert_audio(input_path: str) -> str:
 async def handle_audio(message: types.Message, state: FSMContext):
     unique_id = uuid.uuid4().hex
     await message.reply("🔍 Начинаю обработку...")
-    
     try:
-        # Определяем тип файла
         if message.voice:
             file = await bot.get_file(message.voice.file_id)
             ext = "ogg"
+            file_name = "Голосовое сообщение"  
         elif message.audio:
             file = await bot.get_file(message.audio.file_id)
             ext = "mp3"
+            file_name = message.audio.file_name or "Аудиофайл"  
         else:
             if not message.document.mime_type.startswith('audio/'):
                 return await message.reply("❌ Пожалуйста, отправьте аудиофайл")
             file = await bot.get_file(message.document.file_id)
             ext = os.path.splitext(message.document.file_name)[1][1:] or "mp3"
-            file_name = message.document.file_name
+            file_name = message.document.file_name  
 
         # Скачиваем файл с уникальным именем
         input_path = f"temp_{unique_id}.{ext}"
