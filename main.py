@@ -321,6 +321,8 @@ async def main() -> None:
     )
     dp.include_router(router)
     dp.message.middleware(StateMiddleware())
+    bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(
+        parse_mode=ParseMode.HTML))
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
