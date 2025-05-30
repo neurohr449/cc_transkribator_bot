@@ -200,35 +200,24 @@ async def safe_download_file(url: str, destination: str) -> bool:
     return False
 
 async def convert_audio(input_path: str) -> str:
-    """Конвертирует аудио в WAV с контролем размера"""
+    """Конвертирует аудио в WAV, если размер после конвертации <= MAX_FILE_SIZE"""
     unique_id = uuid.uuid4().hex
     output_path = os.path.join(tempfile.gettempdir(), f"converted_{unique_id}.wav")
     
     try:
         audio = AudioSegment.from_file(input_path)
-        
-        # Оптимизация параметров для уменьшения размера
-        audio = audio.set_channels(1)  # Моно
-        audio = audio.set_frame_rate(16000)  # 16 kHz вместо 8 (хороший баланс качество/размер)
-        
-        # Рассчитываем ожидаемый размер (примерно 32kbps * длительность)
-        duration = len(audio) / 1000  # в секундах
-        estimated_size = duration * 4000  # ~32kbps в байтах
-        
-        if estimated_size > MAX_FILE_SIZE:
-            raise ValueError(f"Файл слишком большой для конвертации целиком ({estimated_size/1024/1024:.2f} MB)")
+        audio = audio.set_channels(1).set_frame_rate(16000)  # 16 kHz моно
         
         audio.export(
             output_path,
             format="wav",
             codec="pcm_s16le",
-            bitrate="32k"  # Снижаем битрейт
+            bitrate="32k"
         )
         
-        actual_size = os.path.getsize(output_path)
-        if actual_size > MAX_FILE_SIZE:
+        if os.path.getsize(output_path) > MAX_FILE_SIZE:
             os.remove(output_path)
-            raise ValueError(f"Файл превысил лимит после конвертации ({actual_size/1024/1024:.2f} MB)")
+            raise ValueError("Файл слишком большой после конвертации")
             
         return output_path
     except Exception as e:
