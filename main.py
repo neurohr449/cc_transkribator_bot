@@ -36,7 +36,7 @@ import time
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 MAX_FILE_SIZE = 24 * 1024 * 1024  
-CHUNK_DURATION = 300 
+CHUNK_DURATION = 180 
 DOWNLOAD_TIMEOUT = 1200 
 MAX_RETRIES = 3  
 MAX_FILES_PER_FOLDER = 1000  # Максимальное количество файлов для обработки из одной папки
