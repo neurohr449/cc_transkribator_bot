@@ -91,19 +91,32 @@ async def get_google_drive_service():
     )
     return build('drive', 'v3', credentials=creds)
 
-# Функции для работы с Google Drive
 def extract_file_id_from_url(url: str) -> str:
     """Извлекает ID файла или папки из URL Google Drive"""
     parsed = urlparse(url)
     
     # Обработка разных форматов URL
     if 'drive.google.com' in parsed.netloc:
-        if '/file/d/' in parsed.path:
-            return parsed.path.split('/')[3]  # Формат: https://drive.google.com/file/d/FILE_ID/view
-        elif '/drive/folders/' in parsed.path:
-            return parsed.path.split('/')[4]  # Формат: https://drive.google.com/drive/folders/FOLDER_ID
-        elif 'id=' in parsed.query:
-            return parse_qs(parsed.query)['id'][0]  # Формат: https://drive.google.com/open?id=FILE_ID
+        path_parts = parsed.path.split('/')
+        
+        # Формат: https://drive.google.com/file/d/FILE_ID/view
+        if '/file/d/' in parsed.path and len(path_parts) > 4:
+            return path_parts[4]
+        
+        # Формат: https://drive.google.com/drive/folders/FOLDER_ID
+        if '/drive/folders/' in parsed.path and len(path_parts) > 4:
+            return path_parts[4]
+        
+        # Формат: https://drive.google.com/open?id=FILE_ID
+        if 'id=' in parsed.query:
+            query_params = parse_qs(parsed.query)
+            return query_params.get('id', [None])[0]
+    
+    # Формат: https://docs.google.com/document/d/FILE_ID/edit
+    if 'docs.google.com' in parsed.netloc and '/d/' in parsed.path:
+        path_parts = parsed.path.split('/')
+        if len(path_parts) > 3:
+            return path_parts[3]
     
     return None
 
