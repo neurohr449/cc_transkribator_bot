@@ -238,47 +238,57 @@ async def convert_audio(input_path: str) -> str:
         return None
 
 async def process_large_audio(file_path: str) -> str:
-    """Обрабатывает большие файлы с контролем размера чанков"""
+    """Разбивает большой файл на чанки, гарантируя размер каждого < MAX_FILE_SIZE"""
     try:
         audio = AudioSegment.from_file(file_path)
-        duration_sec = len(audio) / 1000
+        sample_rate = audio.frame_rate
         all_texts = []
         
-        # Динамический расчет длительности чанка
-        sample_rate = audio.frame_rate
-        bytes_per_second = sample_rate * 2 * 1  # 16-bit mono = 2 bytes per sample
-        max_chunk_duration = MAX_FILE_SIZE / bytes_per_second
-        chunk_duration = min(CHUNK_DURATION, max_chunk_duration)
+        # Рассчитываем максимальную длительность чанка в секундах
+        # Формула: MAX_FILE_SIZE / (sample_rate * num_channels * bytes_per_sample)
+        # Для 16-bit mono: 2 байта на сэмпл
+        max_chunk_duration_sec = MAX_FILE_SIZE / (sample_rate * 2)
         
-        num_chunks = math.ceil(duration_sec / chunk_duration)
+        # Разбиваем файл на чанки
+        duration_ms = len(audio)
+        chunk_duration_ms = int(max_chunk_duration_sec * 1000)
+        num_chunks = math.ceil(duration_ms / chunk_duration_ms)
         
         for i in range(num_chunks):
-            start = i * chunk_duration * 1000
-            end = (i + 1) * chunk_duration * 1000
+            start = i * chunk_duration_ms
+            end = min((i + 1) * chunk_duration_ms, duration_ms)
             chunk = audio[start:end]
             
             chunk_path = f"{file_path}_chunk_{i}.wav"
             try:
-                chunk.export(chunk_path, format="wav")
+                # Экспортируем чанк
+                chunk.export(
+                    chunk_path,
+                    format="wav",
+                    codec="pcm_s16le"
+                )
                 
-                # Проверка размера чанка
+                # Проверяем размер чанка (должен быть <= MAX_FILE_SIZE)
                 chunk_size = os.path.getsize(chunk_path)
                 if chunk_size > MAX_FILE_SIZE:
-                    raise ValueError(f"Чанк {i+1} превысил лимит ({chunk_size/1024/1024:.2f} MB)")
+                    raise ValueError(
+                        f"Чанк {i+1} превысил лимит: {chunk_size/1024/1024:.2f} MB > "
+                        f"{MAX_FILE_SIZE/1024/1024:.2f} MB"
+                    )
                 
+                # Отправляем на транскрибацию
                 with open(chunk_path, "rb") as f:
                     transcript = client.audio.transcriptions.create(
                         file=f,
                         model="whisper-1",
-                        language="ru",
-                        temperature=0  # Для более точного распознавания
+                        language="ru"
                     )
                     all_texts.append(transcript.text)
             finally:
                 if os.path.exists(chunk_path):
                     os.remove(chunk_path)
         
-        return "\n".join(f"[Часть {i+1}/{num_chunks}]\n{text}" for i, text in enumerate(all_texts))
+        return "\n\n".join(f"🔹 Часть {i+1}/{num_chunks}:\n{text}" for i, text in enumerate(all_texts))
     except Exception as e:
         logging.error(f"Ошибка обработки большого файла: {e}")
         raise
