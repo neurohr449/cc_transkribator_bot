@@ -28,6 +28,8 @@ from urllib.parse import urlparse, parse_qs
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
+from googleapiclient.discovery_cache.base import Cache
+from googleapiclient.discovery_cache import MemoryCache
 import io
 from typing import List
 import time
@@ -36,10 +38,10 @@ import time
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 MAX_FILE_SIZE = 24 * 1024 * 1024  
-CHUNK_DURATION = 300  
+CHUNK_DURATION = 300 
 DOWNLOAD_TIMEOUT = 1200 
 MAX_RETRIES = 3  
-MAX_FILES_PER_FOLDER = 100  # Максимальное количество файлов для обработки из одной папки
+MAX_FILES_PER_FOLDER = 1000  # Максимальное количество файлов для обработки из одной папки
 
 # Настройки Google Drive
 GOOGLE_DRIVE_CREDS = {
@@ -89,7 +91,10 @@ async def get_google_drive_service():
         GOOGLE_DRIVE_CREDS,
         scopes=['https://www.googleapis.com/auth/drive.readonly']
     )
-    return build('drive', 'v3', credentials=creds)
+
+    logging.getLogger('googleapiclient.discovery_cache').setLevel(logging.ERROR)
+
+    return build('drive', 'v3', credentials=creds, cache=MemoryCache(), static_discovery=False)
 
 def extract_file_id_from_url(url: str) -> str:
     """Извлекает ID файла или папки из URL Google Drive с учетом всех форматов"""
@@ -197,61 +202,85 @@ async def safe_download_file(url: str, destination: str) -> bool:
     return False
 
 async def convert_audio(input_path: str) -> str:
-    """Конвертирует аудио в WAV формать"""
+    """Конвертирует аудио в WAV с контролем размера"""
     unique_id = uuid.uuid4().hex
     output_path = os.path.join(tempfile.gettempdir(), f"converted_{unique_id}.wav")
     
     try:
         audio = AudioSegment.from_file(input_path)
-        audio = audio.set_channels(1).set_frame_rate(8000)
+        
+        # Оптимизация параметров для уменьшения размера
+        audio = audio.set_channels(1)  # Моно
+        audio = audio.set_frame_rate(16000)  # 16 kHz вместо 8 (хороший баланс качество/размер)
+        
+        # Рассчитываем ожидаемый размер (примерно 32kbps * длительность)
+        duration = len(audio) / 1000  # в секундах
+        estimated_size = duration * 4000  # ~32kbps в байтах
+        
+        if estimated_size > MAX_FILE_SIZE:
+            raise ValueError(f"Файл слишком большой для конвертации целиком ({estimated_size/1024/1024:.2f} MB)")
         
         audio.export(
             output_path,
             format="wav",
             codec="pcm_s16le",
-            bitrate="64k"
+            bitrate="32k"  # Снижаем битрейт
         )
         
-        if os.path.getsize(output_path) > MAX_FILE_SIZE:
+        actual_size = os.path.getsize(output_path)
+        if actual_size > MAX_FILE_SIZE:
             os.remove(output_path)
-            raise ValueError("Файл слишком большой после конвертации")
+            raise ValueError(f"Файл превысил лимит после конвертации ({actual_size/1024/1024:.2f} MB)")
             
         return output_path
     except Exception as e:
         logging.error(f"Ошибка конвертации: {e}")
-        if 'output_path' in locals() and os.path.exists(output_path):
+        if os.path.exists(output_path):
             os.remove(output_path)
         return None
 
 async def process_large_audio(file_path: str) -> str:
-    """Разбивает большой аудиофайл на части и обрабатывает их"""
+    """Обрабатывает большие файлы с контролем размера чанков"""
     try:
         audio = AudioSegment.from_file(file_path)
         duration_sec = len(audio) / 1000
-        num_chunks = math.ceil(duration_sec / CHUNK_DURATION)
         all_texts = []
         
+        # Динамический расчет длительности чанка
+        sample_rate = audio.frame_rate
+        bytes_per_second = sample_rate * 2 * 1  # 16-bit mono = 2 bytes per sample
+        max_chunk_duration = MAX_FILE_SIZE / bytes_per_second
+        chunk_duration = min(CHUNK_DURATION, max_chunk_duration)
+        
+        num_chunks = math.ceil(duration_sec / chunk_duration)
+        
         for i in range(num_chunks):
-            start = i * CHUNK_DURATION * 1000
-            end = (i + 1) * CHUNK_DURATION * 1000
+            start = i * chunk_duration * 1000
+            end = (i + 1) * chunk_duration * 1000
             chunk = audio[start:end]
             
             chunk_path = f"{file_path}_chunk_{i}.wav"
             try:
                 chunk.export(chunk_path, format="wav")
                 
+                # Проверка размера чанка
+                chunk_size = os.path.getsize(chunk_path)
+                if chunk_size > MAX_FILE_SIZE:
+                    raise ValueError(f"Чанк {i+1} превысил лимит ({chunk_size/1024/1024:.2f} MB)")
+                
                 with open(chunk_path, "rb") as f:
                     transcript = client.audio.transcriptions.create(
                         file=f,
-                        model="whisper-1", 
-                        language="ru"
+                        model="whisper-1",
+                        language="ru",
+                        temperature=0  # Для более точного распознавания
                     )
                     all_texts.append(transcript.text)
             finally:
                 if os.path.exists(chunk_path):
                     os.remove(chunk_path)
         
-        return "\n\n".join(f"[Часть {i+1}/{num_chunks}]\n{text}" for i, text in enumerate(all_texts))
+        return "\n".join(f"[Часть {i+1}/{num_chunks}]\n{text}" for i, text in enumerate(all_texts))
     except Exception as e:
         logging.error(f"Ошибка обработки большого файла: {e}")
         raise
@@ -313,7 +342,7 @@ async def process_audio_file(file_path: str, file_name: str, message: types.Mess
         raise
 
 async def process_folder(folder_url: str, message: types.Message, state: FSMContext):
-    """Обрабатывает все аудиофайлы в указанной папке"""
+    """Обрабатывает все аудиофайлы в указанной папке с параллельным выполнением"""
     folder_id = extract_file_id_from_url(folder_url)
     if not folder_id:
         await message.reply("❌ Не удалось определить ID папки из ссылки")
@@ -330,80 +359,79 @@ async def process_folder(folder_url: str, message: types.Message, state: FSMCont
         
         total_files = len(files)
         await message.reply(f"🔍 Найдено {total_files} аудиофайлов. Начинаю обработку...")
-        
-        processed_count = 0
-        failed_count = 0
+
+        # Создаем семафор для ограничения одновременных задач (3-5 в зависимости от сервера)
+        concurrency_limit = asyncio.Semaphore(3)
         results = []
-        
-        for file in files:
-            file_id = file['id']
-            file_name = file['name']
-            
-            try:
-                unique_id = uuid.uuid4().hex
-                ext = file_name.split('.')[-1] if '.' in file_name else 'mp3'
-                input_path = f"temp_{unique_id}.{ext}"
-                
-                # Скачиваем файл
-                if not await download_from_google_drive(file_id, input_path):
-                    failed_count += 1
-                    results.append(f"❌ {file_name} - ошибка скачивания")
-                    continue
-                
-                # Конвертируем и обрабатываем
-                output_path = await convert_audio(input_path)
-                if not output_path:
-                    failed_count += 1
-                    results.append(f"❌ {file_name} - ошибка конвертации")
-                    continue
+
+        async def process_single_file_wrapper(file: dict):
+            """Обертка для обработки одного файла с ограничением параллелизма"""
+            async with concurrency_limit:
+                file_id = file['id']
+                file_name = file['name']
+                input_path = None
+                output_path = None
                 
                 try:
+                    # Скачивание файла
+                    unique_id = uuid.uuid4().hex
+                    ext = file_name.split('.')[-1] if '.' in file_name else 'mp3'
+                    input_path = f"temp_{unique_id}.{ext}"
+                    
+                    if not await download_from_google_drive(file_id, input_path):
+                        return f"❌ {file_name} - ошибка скачивания"
+
+                    # Конвертация
+                    output_path = await convert_audio(input_path)
+                    if not output_path:
+                        return f"❌ {file_name} - ошибка конвертации"
+
+                    # Обработка
                     row_number = await process_audio_file(output_path, file_name, message, state)
-                    results.append(f"✅ {file_name} - строка {row_number}")
-                    processed_count += 1
+                    return f"✅ {file_name} - строка {row_number}"
+
                 except Exception as e:
                     logging.error(f"Ошибка обработки файла {file_name}: {e}")
-                    results.append(f"❌ {file_name} - ошибка обработки")
-                    failed_count += 1
-                
-                # Задержка между файлами
-                time.sleep(1)
-                
-            except Exception as e:
-                logging.error(f"Ошибка при обработке файла {file_name}: {e}")
-                failed_count += 1
-                results.append(f"❌ {file_name} - непредвиденная ошибка")
-            finally:
-                # Удаляем временные файлы
-                for path in [input_path, output_path]:
-                    if path and os.path.exists(path):
-                        try:
-                            os.remove(path)
-                        except:
-                            pass
-        
-        # Формируем итоговый отчет
+                    return f"❌ {file_name} - ошибка: {str(e)}"
+                finally:
+                    # Очистка временных файлов
+                    for path in [input_path, output_path]:
+                        if path and os.path.exists(path):
+                            try:
+                                os.remove(path)
+                            except:
+                                pass
+
+        # Запускаем все задачи параллельно
+        tasks = [process_single_file_wrapper(file) for file in files]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Анализ результатов
+        successful = sum(1 for r in results if isinstance(r, str) and r.startswith("✅"))
+        failed = len(results) - successful
+
+        # Формируем отчет
         report = [
-            f"📊 Итоговый отчет:",
+            f"📊 Итоговый отчет (параллельная обработка):",
             f"Всего файлов: {total_files}",
-            f"Успешно обработано: {processed_count}",
-            f"Не удалось обработать: {failed_count}",
+            f"Успешно обработано: {successful}",
+            f"Не удалось обработать: {failed}",
             "",
             "Результаты по файлам:"
         ]
-        
-        # Разбиваем результаты на части, если их слишком много
+
+        # Разбиваем результаты на части для отправки
         chunk_size = 40
         for i in range(0, len(results), chunk_size):
             chunk = results[i:i + chunk_size]
             report_chunk = "\n".join([*report[:5], *chunk]) if i == 0 else "\n".join(chunk)
             await message.reply(report_chunk)
-        
+
         return True
-    
+
     except Exception as e:
         logging.error(f"Ошибка при обработке папки: {e}")
-        await message.reply(f"❌ Произошла ошибка при обработке папки: {e}")
+        await message.reply(f"❌ Произошла критическая ошибка при обработке папки: {e}")
         return False
 
 # Функция записи в Google Sheets
@@ -419,7 +447,7 @@ async def write_to_google_sheets(transcription_text: str, ai_response: str, file
 
         spreadsheet = gc.open_by_key(os.getenv("GSHEETS_SPREADSHEET_ID"))
         worksheet = spreadsheet.worksheet(os.getenv("GSHEETS_SHEET_NAME", "Sheet1"))
-
+        
         row_data = [
             datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             str(transcription_text),
@@ -491,7 +519,7 @@ async def handle_audio_link(message: types.Message, state: FSMContext):
                 await message.reply("❌ Не удалось скачать файл из Google Drive")
                 return
             
-            if os.path.getsize(input_path) > 100 * 1024 * 1024:
+            if os.path.getsize(input_path) > 1000 * 1024 * 1024:
                 os.remove(input_path)
                 await message.reply("❌ Файл слишком большой. Максимальный размер: 100MB")
                 return
