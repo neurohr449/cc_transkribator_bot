@@ -28,8 +28,6 @@ from urllib.parse import urlparse, parse_qs
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
-from googleapiclient.discovery_cache.base import Cache
-from googleapiclient.discovery_cache import MemoryCache
 import io
 from typing import List
 import time
@@ -94,7 +92,7 @@ async def get_google_drive_service():
 
     logging.getLogger('googleapiclient.discovery_cache').setLevel(logging.ERROR)
 
-    return build('drive', 'v3', credentials=creds, cache=MemoryCache(), static_discovery=False)
+    return build('drive', 'v3', credentials=creds)
 
 def extract_file_id_from_url(url: str) -> str:
     """Извлекает ID файла или папки из URL Google Drive с учетом всех форматов"""
@@ -447,7 +445,7 @@ async def write_to_google_sheets(transcription_text: str, ai_response: str, file
 
         spreadsheet = gc.open_by_key(os.getenv("GSHEETS_SPREADSHEET_ID"))
         worksheet = spreadsheet.worksheet(os.getenv("GSHEETS_SHEET_NAME", "Sheet1"))
-        
+
         row_data = [
             datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             str(transcription_text),
