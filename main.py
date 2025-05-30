@@ -200,23 +200,24 @@ async def safe_download_file(url: str, destination: str) -> bool:
     return False
 
 async def convert_audio(input_path: str) -> str:
-    """Конвертирует аудио в WAV, если размер после конвертации <= MAX_FILE_SIZE"""
+    """Конвертирует аудио в MP3"""
     unique_id = uuid.uuid4().hex
-    output_path = os.path.join(tempfile.gettempdir(), f"converted_{unique_id}.wav")
+    output_path = os.path.join(tempfile.gettempdir(), f"converted_{unique_id}.mp3")  # Изменили на MP3
     
     try:
         audio = AudioSegment.from_file(input_path)
-        audio = audio.set_channels(1).set_frame_rate(16000)  # 16 kHz моно
+        
+        # Оптимальные параметры для уменьшения размера
+        audio = audio.set_channels(1)  # Моно
+        audio = audio.set_frame_rate(16000)  # 16 kHz
         
         audio.export(
             output_path,
-            format="wav",
-            codec="pcm_s16le",
-            bitrate="32k"
+            format="mp3",  
+            bitrate="64k"  
         )
         
         if os.path.getsize(output_path) > MAX_FILE_SIZE:
-            os.remove(output_path)
             raise ValueError("Файл слишком большой после конвертации")
             
         return output_path
@@ -227,45 +228,36 @@ async def convert_audio(input_path: str) -> str:
         return None
 
 async def process_large_audio(file_path: str) -> str:
-    """Разбивает большой файл на чанки, гарантируя размер каждого < MAX_FILE_SIZE"""
+    """Разбивает большой файл на чанки в MP3"""
     try:
         audio = AudioSegment.from_file(file_path)
-        sample_rate = audio.frame_rate
         all_texts = []
         
-        # Рассчитываем максимальную длительность чанка в секундах
-        # Формула: MAX_FILE_SIZE / (sample_rate * num_channels * bytes_per_sample)
-        # Для 16-bit mono: 2 байта на сэмпл
-        max_chunk_duration_sec = MAX_FILE_SIZE / (sample_rate * 2)
-        
-        # Разбиваем файл на чанки
-        duration_ms = len(audio)
+        # Рассчитываем максимальную длительность чанка (MP3 ~64kbps)
+        max_chunk_duration_sec = (MAX_FILE_SIZE * 8) / 64000  # 64kbps в битах
         chunk_duration_ms = int(max_chunk_duration_sec * 1000)
-        num_chunks = math.ceil(duration_ms / chunk_duration_ms)
+        
+        num_chunks = math.ceil(len(audio) / chunk_duration_ms)
         
         for i in range(num_chunks):
             start = i * chunk_duration_ms
-            end = min((i + 1) * chunk_duration_ms, duration_ms)
+            end = min((i + 1) * chunk_duration_ms, len(audio))
             chunk = audio[start:end]
             
-            chunk_path = f"{file_path}_chunk_{i}.wav"
+            chunk_path = f"{file_path}_chunk_{i}.mp3"  # Изменили на MP3
             try:
-                # Экспортируем чанк
                 chunk.export(
                     chunk_path,
-                    format="wav",
-                    codec="pcm_s16le"
+                    format="mp3",  # Экспорт в MP3
+                    bitrate="64k",
+                    parameters=["-ar", "16000"]  # Частота 16kHz
                 )
                 
-                # Проверяем размер чанка (должен быть <= MAX_FILE_SIZE)
-                chunk_size = os.path.getsize(chunk_path)
-                if chunk_size > MAX_FILE_SIZE:
-                    raise ValueError(
-                        f"Чанк {i+1} превысил лимит: {chunk_size/1024/1024:.2f} MB > "
-                        f"{MAX_FILE_SIZE/1024/1024:.2f} MB"
-                    )
+                # Проверка размера
+                if os.path.getsize(chunk_path) > MAX_FILE_SIZE:
+                    raise ValueError(f"Чанк {i+1} превысил лимит размера")
                 
-                # Отправляем на транскрибацию
+                # Обработка
                 with open(chunk_path, "rb") as f:
                     transcript = client.audio.transcriptions.create(
                         file=f,
@@ -483,7 +475,7 @@ async def ass_token(message: Message, state: FSMContext):
 
 @router.message(F.text, StateFilter(UserState.audio))
 async def handle_audio_link(message: types.Message, state: FSMContext):
-    """Обработчик ссылок на аудиофайлы и папки"""
+    """Обработчик ссылок на аудиофайлы и папки с конвертацией в MP3"""
     url = message.text.strip()
     
     # Проверяем, является ли ссылка на Google Drive
@@ -495,56 +487,64 @@ async def handle_audio_link(message: types.Message, state: FSMContext):
     if 'folder' in url or 'drive.google.com/drive/folders' in url:
         # Это папка - обрабатываем все файлы
         await process_folder(url, message, state)
-    else:
-        # Это отдельный файл - обрабатываем как раньше
-        file_id = extract_file_id_from_url(url)
-        if not file_id:
-            await message.reply("❌ Не удалось извлечь ID файла из ссылки")
+        return
+    
+    # Обработка отдельного файла
+    file_id = extract_file_id_from_url(url)
+    if not file_id:
+        await message.reply("❌ Не удалось извлечь ID файла из ссылки")
+        return
+    
+    unique_id = uuid.uuid4().hex
+    input_path = None
+    output_path = None
+    
+    try:
+        # Скачиваем файл
+        ext = "mp3"  # Всегда используем MP3 как промежуточный формат
+        input_path = f"temp_{unique_id}.{ext}"
+        
+        await message.reply("⏳ Скачиваю файл из Google Drive...")
+        if not await download_from_google_drive(file_id, input_path):
+            await message.reply("❌ Не удалось скачать файл из Google Drive")
             return
         
-        unique_id = uuid.uuid4().hex
-        input_path = None
-        output_path = None
-        
-        try:
-            ext = "mp3"  # Будем пытаться определить расширение после скачивания
-            input_path = f"temp_{unique_id}.{ext}"
-            
-            
-            
-            if not await download_from_google_drive(file_id, input_path):
-                await message.reply("❌ Не удалось скачать файл из Google Drive")
-                return
-            
-            if os.path.getsize(input_path) > 1000 * 1024 * 1024:
-                os.remove(input_path)
-                await message.reply("❌ Файл слишком большой. Максимальный размер: 100MB")
-                return
+        # Проверка размера (лимит 1GB для исходного файла)
+        if os.path.getsize(input_path) > 1024 * 1024 * 1024:
+            os.remove(input_path)
+            await message.reply("❌ Файл слишком большой. Максимальный размер: 1GB")
+            return
 
-            
-            
+        # Конвертация (если нужно)
+        if not input_path.endswith('.mp3'):
             output_path = await convert_audio(input_path)
             if not output_path:
                 await message.reply("❌ Ошибка конвертации аудио")
                 return
-            
-            try:
-                file_name = f"Google_Drive_file_{file_id[:8]}"
-                row_number = await process_audio_file(output_path, file_name, message, state)
-                await message.reply(f"✅ Результат записан в строку {row_number}")
-            except Exception as e:
-                await message.reply(f"❌ Ошибка обработки: {str(e)}")
-                
+            processing_path = output_path
+        else:
+            processing_path = input_path
+
+        # Обработка файла
+        await message.reply("🔍 Начинаю обработку аудио...")
+        try:
+            file_name = f"Аудиофайл_{file_id[:8]}"
+            row_number = await process_audio_file(processing_path, file_name, message, state)
+            await message.reply(f"✅ Результат записан в строку {row_number}")
         except Exception as e:
-            logging.exception("Ошибка в handle_audio_link")
-            await message.reply("❌ Произошла непредвиденная ошибка при обработке файла")
-        finally:
-            for path in [input_path, output_path]:
-                if path and os.path.exists(path):
-                    try:
-                        os.remove(path)
-                    except Exception as e:
-                        logging.error(f"Ошибка удаления файла {path}: {e}")
+            await message.reply(f"❌ Ошибка обработки: {str(e)}")
+            
+    except Exception as e:
+        logging.exception("Ошибка в handle_audio_link")
+        await message.reply("❌ Произошла непредвиденная ошибка при обработке файла")
+    finally:
+        # Удаляем временные файлы
+        for path in [input_path, output_path]:
+            if path and os.path.exists(path):
+                try:
+                    os.remove(path)
+                except Exception as e:
+                    logging.error(f"Ошибка удаления файла {path}: {e}")
 
 # Запуск бота
 async def main() -> None:
