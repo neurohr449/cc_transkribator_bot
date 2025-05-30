@@ -59,9 +59,9 @@ GOOGLE_DRIVE_CREDS = {
 # Инициализация бота
 session = AiohttpSession(timeout=aiohttp.ClientTimeout(total=DOWNLOAD_TIMEOUT))
 bot = Bot(
-    token=BOT_TOKEN, 
-    session=session, 
-    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+    token=BOT_TOKEN,
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    session_timeout=DOWNLOAD_TIMEOUT  
 )
 storage = MemoryStorage()
 router = Router()
@@ -245,7 +245,7 @@ async def process_audio_file(file_path: str, file_name: str, message: types.Mess
                 )
             transcription_text = transcript.text
         else:
-            await message.reply("🔪 Разбиваю большой файл на части...")
+            
             transcription_text = await process_large_audio(file_path)
         
         state_data = await state.get_data()
@@ -460,7 +460,7 @@ async def handle_audio_link(message: types.Message, state: FSMContext):
             ext = "mp3"  # Будем пытаться определить расширение после скачивания
             input_path = f"temp_{unique_id}.{ext}"
             
-            await message.reply("⏳ Скачиваю файл из Google Drive...")
+            
             
             if not await download_from_google_drive(file_id, input_path):
                 await message.reply("❌ Не удалось скачать файл из Google Drive")
@@ -471,7 +471,7 @@ async def handle_audio_link(message: types.Message, state: FSMContext):
                 await message.reply("❌ Файл слишком большой. Максимальный размер: 100MB")
                 return
 
-            await message.reply("🔍 Начинаю обработку аудио...")
+            
             
             output_path = await convert_audio(input_path)
             if not output_path:
