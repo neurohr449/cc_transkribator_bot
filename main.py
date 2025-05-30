@@ -92,33 +92,45 @@ async def get_google_drive_service():
     return build('drive', 'v3', credentials=creds)
 
 def extract_file_id_from_url(url: str) -> str:
-    """Извлекает ID файла или папки из URL Google Drive"""
-    parsed = urlparse(url)
-    
-    # Обработка разных форматов URL
-    if 'drive.google.com' in parsed.netloc:
-        path_parts = parsed.path.split('/')
+    """Извлекает ID файла или папки из URL Google Drive с учетом всех форматов"""
+    try:
+        # Удаляем возможные параметры после ?
+        clean_url = url.split('?')[0]
         
-        # Формат: https://drive.google.com/file/d/FILE_ID/view
-        if '/file/d/' in parsed.path and len(path_parts) > 4:
-            return path_parts[4]
+        # Форматы ссылок:
+        # 1. https://drive.google.com/drive/folders/{folder_id}
+        # 2. https://drive.google.com/open?id={file_id}
+        # 3. https://drive.google.com/file/d/{file_id}/view
+        # 4. https://docs.google.com/document/d/{file_id}/edit
         
-        # Формат: https://drive.google.com/drive/folders/FOLDER_ID
-        if '/drive/folders/' in parsed.path and len(path_parts) > 4:
-            return path_parts[4]
+        if 'drive.google.com' in clean_url:
+            if '/folders/' in clean_url:
+                # Ссылка на папку
+                parts = clean_url.split('/folders/')
+                if len(parts) > 1:
+                    folder_id = parts[1].split('/')[0].split('?')[0]
+                    if len(folder_id) > 5:  # Минимальная длина ID
+                        return folder_id
+            
+            elif '/file/d/' in clean_url:
+                # Ссылка на файл
+                parts = clean_url.split('/file/d/')
+                if len(parts) > 1:
+                    file_id = parts[1].split('/')[0].split('?')[0]
+                    if len(file_id) > 5:
+                        return file_id
+            
+            elif 'id=' in url:
+                # Ссылка с параметром id
+                from urllib.parse import parse_qs, urlparse
+                query = urlparse(url).query
+                params = parse_qs(query)
+                return params.get('id', [''])[0]
         
-        # Формат: https://drive.google.com/open?id=FILE_ID
-        if 'id=' in parsed.query:
-            query_params = parse_qs(parsed.query)
-            return query_params.get('id', [None])[0]
-    
-    # Формат: https://docs.google.com/document/d/FILE_ID/edit
-    if 'docs.google.com' in parsed.netloc and '/d/' in parsed.path:
-        path_parts = parsed.path.split('/')
-        if len(path_parts) > 3:
-            return path_parts[3]
-    
-    return None
+        return None
+    except Exception as e:
+        logging.error(f"Error extracting ID from URL: {e}")
+        return None
 
 async def download_from_google_drive(file_id: str, destination: str) -> bool:
     """Скачивает файл из Google Drive"""
