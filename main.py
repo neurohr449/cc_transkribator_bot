@@ -466,7 +466,7 @@ async def write_to_google_sheets(transcription_text: str, ai_response: str, file
 async def command_start_handler(message: Message, state: FSMContext) -> None:
     await state.set_state(UserState.ass_token)
     keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="БФЛ", callback_data="bfl")],[InlineKeyboardButton(text="Другое", callback_data="other")]])
-    await message.answer("👋 Добро пожаловать в наш чат-бот! Для начала нужен токен ассистента")
+    await message.answer(text="👋 Добро пожаловать в наш чат-бот! Для начала нужен токен ассистента", reply_markup=keyboard)
 
 @router.callback_query(StateFilter(UserState.ass_token))
 async def company_name(callback_query: types.CallbackQuery, state: FSMContext):
