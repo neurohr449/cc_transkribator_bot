@@ -15,7 +15,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
-from openai import OpenAI
+from openai import OpenAI, AsyncOpenAI
 from pydub import AudioSegment  
 import tempfile
 import aiofiles
@@ -37,6 +37,7 @@ import ffmpeg
 # Конфигурация
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+client2 = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 BFL_TOKEN = os.getenv("")
 MAX_FILE_SIZE = 24 * 1024 * 1024  
 CHUNK_DURATION = 180 
@@ -102,7 +103,7 @@ async def get_google_drive_service():
 
 async def get_chatgpt_response(prompt: str) -> str:
     try:
-        response = await client.chat.completions.create(
+        response = await client2.chat.completions.create(
             model="gpt-4o",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.7  
