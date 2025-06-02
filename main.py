@@ -187,7 +187,7 @@ async def list_files_in_folder(folder_id: str) -> List[dict]:
     return response.get('files', [])
 
 # Функции обработки аудио
-async def safe_download(file: types.File, destination: str) -> bool:
+async def safe_download_file(file: types.File, destination: str) -> bool:
     """Безопасное скачивание файла с повторными попытками"""
     for attempt in range(MAX_RETRIES):
         try:
