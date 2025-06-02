@@ -658,10 +658,17 @@ async def handle_tg_audio(message: types.Message, state: FSMContext):
             if not output_path:
                 await message.reply("❌ Ошибка конвертации аудио")
                 return
-        
+        else:
+            output_path = input_path
+
+        audio = AudioSegment.from_file(output_path)
+        duration_ms = len(audio)
+        if duration_ms < 3000:  # 3 секунды = 3000 мс
+            await message.reply("❌ Слишком короткое аудио (меньше 3 секунд)")
+            return
         try:
             row_number = await process_audio_file(output_path, file_name, message, state)
-            await message.reply(f"✅ Результат записан в строку {row_number}")
+            await message.reply(f"✅ Результат записан в строку {row_number}")            
         except Exception as e:
             await message.reply(f"❌ Ошибка обработки: {str(e)}")
             
