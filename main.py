@@ -481,7 +481,7 @@ async def write_to_google_sheets(transcription_text: str, ai_response: str, file
 
 
         row_data = [
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            (datetime.now() + timedelta(hours=3)).strftime("%Y-%m-%d %H:%M:%S"),
             str(transcription_text),
             str(ai_response),
             str(file_name),
