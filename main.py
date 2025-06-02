@@ -44,7 +44,7 @@ CHUNK_DURATION = 180
 DOWNLOAD_TIMEOUT = 1200 
 MAX_RETRIES = 3  
 MAX_FILES_PER_FOLDER = 1000  # Максимальное количество файлов для обработки из одной папки
-
+IMG = "AgACAgIAAxkBAAO4aD2DBZsntEbv4pCVKjSi-Rg8JUkAAvPzMRuH3OlJMKrGXBeky5IBAAMCAAN4AAM2BA"
 
 
 # Настройки Google Drive
@@ -80,6 +80,7 @@ class UserState(StatesGroup):
     audio = State()
     folder_processing = State()
     sheet_id_token = State()
+    audio_link = State()
 class ImageUploadState(StatesGroup):
     waiting_for_image = State()
     
@@ -521,7 +522,7 @@ async def company_name(callback_query: types.CallbackQuery, state: FSMContext):
         ass_token = os.getenv("OTHER_TOKEN")
     await state.update_data(ass_token=ass_token)
     await state.set_state(UserState.sheet_id_token)
-    await callback_query.message.answer("Скопируйте данную таблицу. В ней будут отображаться записанные на собеседование кандидаты.\nhttps://docs.google.com/spreadsheets/d/1YiruDfMBpp075KMTmUG_dV2vomGZus5-82pkXPMu64k/edit?gid=0#gid=0\n\nОткройте настройки доступа, выберите в пункте \"Доступ пользователям, у которых есть ссылка\" режим \"Редактор\" и нажмите \"Готово\"\n\nИ пришлите ID таблицы в этот чат.\n\nГде найти ID таблицы, смотрите на картинке")
+    await callback_query.message.answer_photo(photo=IMG, caption="Скопируйте данную таблицу. В ней будут отображаться записанные на собеседование кандидаты.\nhttps://docs.google.com/spreadsheets/d/1YiruDfMBpp075KMTmUG_dV2vomGZus5-82pkXPMu64k/edit?gid=0#gid=0\n\nОткройте настройки доступа, выберите в пункте \"Доступ пользователям, у которых есть ссылка\" режим \"Редактор\" и нажмите \"Готово\"\n\nИ пришлите ID таблицы в этот чат.\n\nГде найти ID таблицы, смотрите на картинке", disable_web_page_preview=True)
 
 # @router.message(StateFilter(UserState.company_name))
 # async def ass_token(message: Message, state: FSMContext):
@@ -532,7 +533,7 @@ async def company_name(callback_query: types.CallbackQuery, state: FSMContext):
 @router.message(StateFilter(UserState.sheet_id_token))
 async def ass_token(message: Message, state: FSMContext):
     await state.update_data(sheet_id_token=message.text)
-    await state.set_state(UserState.audio)
+    await state.set_state(UserState.audio_link)
     keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Файлами в этот чат", callback_data="tg_audio")],[InlineKeyboardButton(text="Сcылка на файлы Google Drive", callback_data="Gdrive_link")],[InlineKeyboardButton(text="Сcылка на папку Google Drive", callback_data="Gdrive_folder")]])
     await message.answer(text="Выбери формат для загрузки", reply_markup=keyboard)
 
@@ -540,11 +541,11 @@ async def ass_token(message: Message, state: FSMContext):
 @router.callback_query(StateFilter(UserState.sheet_id_token))
 async def ass_token(callback_query: types.CallbackQuery, state: FSMContext):
     await state.set_state(UserState.audio)
-    if callback_query.data == "bfl":
+    if callback_query.data == "tg_audio":
         await callback_query.message.answer("Присылай файлы")
-    elif callback_query.data == "bfl":
+    elif callback_query.data == "Gdrive_link":
         await callback_query.message.answer("Присылай ссылки на файлы Google Drive по одной")
-    else:
+    elif callback_query.data == "Gdrive_folder":
         await callback_query.message.answer("Присылай ссылку на папку в Google Drive для оценки")
 
 @router.message(F.text, StateFilter(UserState.audio))
@@ -665,19 +666,19 @@ async def handle_tg_audio(message: types.Message, state: FSMContext):
                 except Exception as e:
                     logging.error(f"Ошибка удаления файла {path}: {e}")
 
-@router.message(Command("upload_image"))
-async def upload_image_command(message: types.Message, state: FSMContext):
-    await state.set_state(ImageUploadState.waiting_for_image)
-    await message.answer("Please send me an image, and I'll give you its file_id.")
+# @router.message(Command("upload_image"))
+# async def upload_image_command(message: types.Message, state: FSMContext):
+#     await state.set_state(ImageUploadState.waiting_for_image)
+#     await message.answer("Please send me an image, and I'll give you its file_id.")
 
-@router.message(ImageUploadState.waiting_for_image, lambda message: message.photo)
-async def handle_image_upload(message: types.Message, state: FSMContext):
-    file_id = message.photo[-1].file_id
+# @router.message(ImageUploadState.waiting_for_image, lambda message: message.photo)
+# async def handle_image_upload(message: types.Message, state: FSMContext):
+#     file_id = message.photo[-1].file_id
 
-    await message.answer(f"Here is the file_id of your image:\n\n<code>{file_id}</code>\n\n"
-                         "You can use this file_id to send the image in your bot.")
+#     await message.answer(f"Here is the file_id of your image:\n\n<code>{file_id}</code>\n\n"
+#                          "You can use this file_id to send the image in your bot.")
 
-    await state.clear()
+#     await state.clear()
 
 
 # Запуск бота
