@@ -614,9 +614,9 @@ async def handle_tg_audio(message: types.Message, state: FSMContext):
             ext = "mp3"
             file_name = message.audio.file_name or "Аудиофайл"
         elif message.video:
-            file = await bot.get_file(message.audio.file_id)
+            file = await bot.get_file(message.video.file_id)
             ext = "mp4"
-            file_name = message.audio.file_name or "Аудиофайл"
+            file_name = message.audio.file_name or "Видеофайл"
         else:
             if not message.document.mime_type.startswith('audio/'):
                 await message.reply("❌ Пожалуйста, отправьте аудиофайл")
