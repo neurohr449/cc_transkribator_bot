@@ -514,9 +514,9 @@ async def company_name(message: Message, state: FSMContext):
 #     await state.set_state(UserState.sheet_id_token)
 #     await message.answer("Скопируйте данную таблицу. В ней будут отображаться записанные на собеседование кандидаты.\nhttps://docs.google.com/spreadsheets/d/1YiruDfMBpp075KMTmUG_dV2vomGZus5-82pkXPMu64k/edit?gid=0#gid=0\n\nОткройте настройки доступа, выберите в пункте \"Доступ пользователям, у которых есть ссылка\" режим \"Редактор\" и нажмите \"Готово\"\n\nИ пришлите ID таблицы в этот чат.\n\nГде найти ID таблицы, смотрите на картинке")
 
-@router.message(StateFilter(UserState.sheet_id_token))
+@router.message(StateFilter(UserState.company_name))
 async def ass_token(message: Message, state: FSMContext):
-    await state.update_data(sheet_id_token=message.text)
+    await state.update_data(company_name=message.text)
     await state.set_state(UserState.audio_link)
     keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Файлами в этот чат", callback_data="tg_audio")],[InlineKeyboardButton(text="Сcылка на файлы Google Drive", callback_data="gdrive_link")],[InlineKeyboardButton(text="Сcылка на папку Google Drive", callback_data="gdrive_folder")]])
     await message.answer(text="Выбери формат для загрузки", reply_markup=keyboard)
