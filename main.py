@@ -187,21 +187,19 @@ async def list_files_in_folder(folder_id: str) -> List[dict]:
     return response.get('files', [])
 
 # Функции обработки аудио
-async def safe_download_file(url: str, destination: str) -> bool:
-    """Безопасное скачивание файла по URL"""
+async def safe_download(file: types.File, destination: str) -> bool:
+    """Безопасное скачивание файла с повторными попытками"""
     for attempt in range(MAX_RETRIES):
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url) as response:
-                    if response.status == 200:
-                        async with aiofiles.open(destination, 'wb') as f:
-                            await f.write(await response.read())
-                        return True
+            await bot.download(file, destination=destination)
+            return True
         except (asyncio.TimeoutError, aiohttp.ClientError) as e:
             if attempt == MAX_RETRIES - 1:
                 raise
             await asyncio.sleep(2 * (attempt + 1))
             continue
+        except Exception as e:
+            raise
     return False
 
 async def convert_audio(input_path: str) -> str:
