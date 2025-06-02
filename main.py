@@ -488,7 +488,7 @@ async def write_to_google_sheets(transcription_text: str, ai_response: str, file
             str(file_name),
             f"@{username}",
             f"https://t.me/{username}",
-            user_data.get('company_name'),
+#           user_data.get('company_name'),
             user_data.get('ass_token'),
             file_len,
             phone,
@@ -638,13 +638,12 @@ async def handle_tg_audio(message: types.Message, state: FSMContext):
             await message.reply("❌ Файл слишком большой. Максимальный размер: 100MB")
             return
 
-        await message.reply("🔍 Начинаю обработку аудио...")
-        
-        # Конвертация
-        output_path = await convert_audio(input_path)
-        if not output_path:
-            await message.reply("❌ Ошибка конвертации аудио")
-            return
+                
+        if ext != "mp3":
+            output_path = await convert_audio(input_path)
+            if not output_path:
+                await message.reply("❌ Ошибка конвертации аудио")
+                return
         
         try:
             row_number = await process_audio_file(output_path, file_name, message, state)
