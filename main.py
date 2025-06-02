@@ -597,7 +597,7 @@ async def handle_audio_link(message: types.Message, state: FSMContext):
 
 
 
-@router.message(F.voice | F.audio | F.document, StateFilter(UserState.audio))
+@router.message(F.voice | F.audio | F.document | F.video, StateFilter(UserState.audio))
 async def handle_tg_audio(message: types.Message, state: FSMContext):
     unique_id = uuid.uuid4().hex
     input_path = None
