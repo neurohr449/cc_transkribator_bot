@@ -613,6 +613,10 @@ async def handle_tg_audio(message: types.Message, state: FSMContext):
             file = await bot.get_file(message.audio.file_id)
             ext = "mp3"
             file_name = message.audio.file_name or "Аудиофайл"
+        elif message.video:
+            file = await bot.get_file(message.audio.file_id)
+            ext = "mp4"
+            file_name = message.audio.file_name or "Аудиофайл"
         else:
             if not message.document.mime_type.startswith('audio/'):
                 await message.reply("❌ Пожалуйста, отправьте аудиофайл")
@@ -632,6 +636,13 @@ async def handle_tg_audio(message: types.Message, state: FSMContext):
             await message.reply(f"❌ Ошибка скачивания файла: {str(e)}")
             return
         
+        # Определяем тип файла
+        is_video = any(input_path.endswith(ext) for ext in ['.mp4', '.mov', '.avi'])
+
+        if is_video:
+            audio_path = await extract_audio_from_video(input_path)  
+            input_path = audio_path
+
         # Проверка размера файла
         if os.path.getsize(input_path) > 100 * 1024 * 1024:
             os.remove(input_path)
