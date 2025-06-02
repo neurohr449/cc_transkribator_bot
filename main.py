@@ -100,6 +100,18 @@ async def get_google_drive_service():
 
     return build('drive', 'v3', credentials=creds)
 
+async def get_chatgpt_response(prompt: str) -> str:
+    try:
+        response = await client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7  
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        logging.error(f"OpenAI error: {e}")
+        return "Извините, не удалось обработать запрос"  
+
 def extract_file_id_from_url(url: str) -> str:
     """Извлекает ID файла или папки из URL Google Drive с учетом всех форматов"""
     try:
@@ -251,8 +263,7 @@ async def process_large_audio(file_path: str) -> str:
                     transcript = client.audio.transcriptions.create(
                         file=f,
                         model="whisper-1",
-                        language="ru",
-                        prompt="Твоя задача транскрибировать аудио диалог между клиентом и оператором и выдать ответ в формате. Клиент:...   Оператор:... "
+                        language="ru"
                     )
                     all_texts.append(transcript.text)
             finally:
@@ -291,8 +302,7 @@ async def process_audio_file(file_path: str, file_name: str, message: types.Mess
                 transcript = client.audio.transcriptions.create(
                     file=audio_file,
                     model="whisper-1",
-                    language="ru",
-                    prompt="Твоя задача транскрибировать аудио диалог между клиентом и оператором и выдать ответ в формате. Клиент:...   Оператор:... "
+                    language="ru"
                 )
             transcription_text = transcript.text
         else:
@@ -327,12 +337,21 @@ async def process_audio_file(file_path: str, file_name: str, message: types.Mess
         response_text = messages.data[0].content[0].text.value
         
         username = message.from_user.username or str(message.from_user.id)
+        personal_sheet_row = await write_to_google_sheets(
+            transcription_text=transcription_text,
+            ai_response=response_text,
+            file_name=file_name,
+            username=username,
+            state=state,
+            sheet_n=1
+        )
         return await write_to_google_sheets(
             transcription_text=transcription_text,
             ai_response=response_text,
             file_name=file_name,
             username=username,
-            state=state
+            state=state,
+            sheet_n=2
         )
     except Exception as e:
         logging.error(f"Ошибка обработки файла: {e}")
@@ -433,7 +452,7 @@ async def process_folder(folder_url: str, message: types.Message, state: FSMCont
         return False
 
 # Функция записи в Google Sheets
-async def write_to_google_sheets(transcription_text: str, ai_response: str, file_name: str, username: str, state: FSMContext) -> int:
+async def write_to_google_sheets(transcription_text: str, ai_response: str, file_name: str, username: str, sheet_n: int, state: FSMContext) -> int:
     """Записывает данные в Google Sheets и возвращает номер строки"""
     try:
         user_data = await state.get_data()
@@ -442,9 +461,16 @@ async def write_to_google_sheets(transcription_text: str, ai_response: str, file
                'https://www.googleapis.com/auth/drive']
         creds = ServiceAccountCredentials.from_json_keyfile_dict(GOOGLE_DRIVE_CREDS, scope)
         gc = gspread.authorize(creds)
-
-        spreadsheet = gc.open_by_key(os.getenv("GSHEETS_SPREADSHEET_ID"))
+        if sheet_n == 1:
+            spreadsheet = gc.open_by_key(os.getenv("GSHEETS_SPREADSHEET_ID"))
+        else:
+            spreadsheet = gc.open_by_key(user_data.get("sheet_id_token"))
         worksheet = spreadsheet.worksheet(os.getenv("GSHEETS_SHEET_NAME", "Sheet1"))
+
+        promt = f"Твоя задача проанализировать название файла и написать ответ строго в заданном формате, если данных недостаточно вместо отсутствующих данных напиши Empty, сохраняя формат сообщения. Дополнительно для выдачи номера телефона используй следующие данные: Номер телефона всегда должен начинатся на +7 (если в названии файла это 8 или 7 замени на +7). Формат для выдачи номера телефона: +7 999 999-99-99  Название файла для анализа{file_name} Ответ дай строго в формате: День/Месяц/Год/Номер телефона"
+        raw_response = await get_chatgpt_response(promt)
+        day, month, year, phone = raw_response.split('/')
+
 
         row_data = [
             datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -454,7 +480,11 @@ async def write_to_google_sheets(transcription_text: str, ai_response: str, file
             f"@{username}",
             f"https://t.me/{username}",
             user_data.get('company_name'),
-            user_data.get('ass_token')
+            user_data.get('ass_token'),
+            phone,
+            day,
+            month,
+            year
         ]
 
         worksheet.append_row(row_data)
@@ -469,7 +499,7 @@ async def write_to_google_sheets(transcription_text: str, ai_response: str, file
 async def command_start_handler(message: Message, state: FSMContext) -> None:
     await state.set_state(UserState.ass_token)
     keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="БФЛ", callback_data="bfl")],[InlineKeyboardButton(text="Другое", callback_data="other")]])
-    await message.answer(text="👋 Добро пожаловать в наш чат-бот! Для начала нужен токен ассистента", reply_markup=keyboard)
+    await message.answer(text="👋 Добро пожаловать в наш чат-бот! Ваша компания занимаеться БФЛ или у вас другая сфера?", reply_markup=keyboard)
 
 @router.callback_query(StateFilter(UserState.ass_token))
 async def company_name(callback_query: types.CallbackQuery, state: FSMContext):
@@ -491,6 +521,7 @@ async def ass_token(message: Message, state: FSMContext):
 
 @router.message(StateFilter(UserState.sheet_id_token))
 async def ass_token(message: Message, state: FSMContext):
+    await state.update_data(sheet_id_token=message.text)
     await state.set_state(UserState.audio)
     await message.answer("Присылай ссылку на аудиофайл или папку в Google Drive для оценки")
 
