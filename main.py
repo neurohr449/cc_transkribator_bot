@@ -37,11 +37,14 @@ import ffmpeg
 # Конфигурация
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+BFL_TOKEN = os.getenv("")
 MAX_FILE_SIZE = 24 * 1024 * 1024  
 CHUNK_DURATION = 180 
 DOWNLOAD_TIMEOUT = 1200 
 MAX_RETRIES = 3  
 MAX_FILES_PER_FOLDER = 1000  # Максимальное количество файлов для обработки из одной папки
+
+
 
 # Настройки Google Drive
 GOOGLE_DRIVE_CREDS = {
@@ -348,11 +351,11 @@ async def process_folder(folder_url: str, message: types.Message, state: FSMCont
             await message.reply("🔍 В папке не найдено аудиофайлов")
             return False
         
-        await state.set_state(UserState.folder_processing)
+        
         await state.update_data(current_folder=folder_id, files_to_process=files)
         
         total_files = len(files)
-        await message.reply(f"🔍 Найдено {total_files} аудиофайлов. Начинаю обработку...")
+        await message.reply(f"🔍 Найдено {total_files} файлов. Начинаю обработку...")
 
         # Создаем семафор для ограничения одновременных задач (3-5 в зависимости от сервера)
         concurrency_limit = asyncio.Semaphore(3)
@@ -472,9 +475,10 @@ async def command_start_handler(message: Message, state: FSMContext) -> None:
 async def company_name(callback_query: types.CallbackQuery, state: FSMContext):
     if callback_query.data == "bfl":
         ass_token = os.getenv("BFL_TOKEN")
+        
     else:
         ass_token = os.getenv("OTHER_TOKEN")
-        await state.update_data(ass_token=ass_token)
+    await state.update_data(ass_token=ass_token)
     await state.set_state(UserState.company_name)
     await callback_query.message.answer("Напиши название компании")
 
