@@ -38,7 +38,6 @@ import ffmpeg
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 client2 = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-BFL_TOKEN = os.getenv("")
 MAX_FILE_SIZE = 24 * 1024 * 1024  
 CHUNK_DURATION = 180 
 DOWNLOAD_TIMEOUT = 1200 
@@ -340,22 +339,14 @@ async def process_audio_file(file_path: str, file_name: str, message: types.Mess
         response_text = messages.data[0].content[0].text.value
         
         username = message.from_user.username or str(message.from_user.id)
-        personal_sheet_row = await write_to_google_sheets(
-            transcription_text=transcription_text,
-            ai_response=response_text,
-            file_name=file_name,
-            username=username,
-            state=state,
-            sheet_n=1,
-            file_len=str(file_len)
-        )
+        
         return await write_to_google_sheets(
             transcription_text=transcription_text,
             ai_response=response_text,
             file_name=file_name,
             username=username,
             state=state,
-            sheet_n=2,
+            sheet_n=1,
             file_len=str(file_len)
         )
     except Exception as e:
@@ -488,7 +479,7 @@ async def write_to_google_sheets(transcription_text: str, ai_response: str, file
             str(file_name),
             f"@{username}",
             f"https://t.me/{username}",
-#           user_data.get('company_name'),
+            user_data.get('company_name'),
             user_data.get('ass_token'),
             file_len,
             phone,
@@ -508,19 +499,14 @@ async def write_to_google_sheets(transcription_text: str, ai_response: str, file
 @router.message(CommandStart())
 async def command_start_handler(message: Message, state: FSMContext) -> None:
     await state.set_state(UserState.ass_token)
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="БФЛ", callback_data="bfl")],[InlineKeyboardButton(text="Другое", callback_data="other")]])
-    await message.answer(text="👋 Добро пожаловать в наш чат-бот! Ваша компания занимаеться БФЛ или у вас другая сфера?", reply_markup=keyboard)
+    await message.answer("👋 Добро пожаловать в наш чат-бот! Для начала нужен токен ассистента")
 
-@router.callback_query(StateFilter(UserState.ass_token))
-async def company_name(callback_query: types.CallbackQuery, state: FSMContext):
-    if callback_query.data == "bfl":
-        ass_token = os.getenv("BFL_TOKEN")
-        
-    else:
-        ass_token = os.getenv("OTHER_TOKEN")
-    await state.update_data(ass_token=ass_token)
-    await state.set_state(UserState.sheet_id_token)
-    await callback_query.message.answer_photo(photo=IMG, caption="Скопируйте данную таблицу. В ней будут отображаться результаты обработки аудио.\nhttps://docs.google.com/spreadsheets/d/1YiruDfMBpp075KMTmUG_dV2vomGZus5-82pkXPMu64k/edit?gid=0#gid=0\n\nОткройте настройки доступа, выберите в пункте \"Доступ пользователям, у которых есть ссылка\" режим \"Редактор\" и нажмите \"Готово\"\n\nИ пришлите ID таблицы в этот чат.\n\nГде найти ID таблицы, смотрите на картинке", disable_web_page_preview=True)
+
+@router.message(StateFilter(UserState.ass_token))
+async def company_name(message: Message, state: FSMContext):
+    await state.update_data(ass_token=message.text)
+    await state.set_state(UserState.company_name)
+    await message.answer("Напиши название компании и менеджера")
 
 # @router.message(StateFilter(UserState.company_name))
 # async def ass_token(message: Message, state: FSMContext):
