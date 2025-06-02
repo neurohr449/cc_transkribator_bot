@@ -184,22 +184,22 @@ async def list_files_in_folder(folder_id: str) -> List[dict]:
     return response.get('files', [])
 
 # Функции обработки аудио
-async def safe_download_file(url: str, destination: str) -> bool:
-    """Безопасное скачивание файла по URL"""
-    for attempt in range(MAX_RETRIES):
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url) as response:
-                    if response.status == 200:
-                        async with aiofiles.open(destination, 'wb') as f:
-                            await f.write(await response.read())
-                        return True
-        except (asyncio.TimeoutError, aiohttp.ClientError) as e:
-            if attempt == MAX_RETRIES - 1:
-                raise
-            await asyncio.sleep(2 * (attempt + 1))
-            continue
-    return False
+# async def safe_download_file(url: str, destination: str) -> bool:
+#     """Безопасное скачивание файла по URL"""
+#     for attempt in range(MAX_RETRIES):
+#         try:
+#             async with aiohttp.ClientSession() as session:
+#                 async with session.get(url) as response:
+#                     if response.status == 200:
+#                         async with aiofiles.open(destination, 'wb') as f:
+#                             await f.write(await response.read())
+#                         return True
+#         except (asyncio.TimeoutError, aiohttp.ClientError) as e:
+#             if attempt == MAX_RETRIES - 1:
+#                 raise
+#             await asyncio.sleep(2 * (attempt + 1))
+#             continue
+#     return False
 
 async def convert_audio(input_path: str) -> str:
     """Конвертирует аудио в MP3"""
@@ -296,8 +296,9 @@ async def extract_audio_from_video(video_path: str) -> str:
 async def process_audio_file(file_path: str, file_name: str, message: types.Message, state: FSMContext) -> int:
     """Обрабатывает аудиофайл и возвращает номер строки в Google Sheets"""
     try:
+        audio = AudioSegment.from_file(file_path)
         file_size = os.path.getsize(file_path)
-        
+        file_len = len(audio)/1000
         if file_size <= MAX_FILE_SIZE:
             with open(file_path, "rb") as audio_file:
                 transcript = client.audio.transcriptions.create(
@@ -344,7 +345,8 @@ async def process_audio_file(file_path: str, file_name: str, message: types.Mess
             file_name=file_name,
             username=username,
             state=state,
-            sheet_n=1
+            sheet_n=1,
+            file_len=str(file_len)
         )
         return await write_to_google_sheets(
             transcription_text=transcription_text,
@@ -352,7 +354,8 @@ async def process_audio_file(file_path: str, file_name: str, message: types.Mess
             file_name=file_name,
             username=username,
             state=state,
-            sheet_n=2
+            sheet_n=2,
+            file_len=str(file_len)
         )
     except Exception as e:
         logging.error(f"Ошибка обработки файла: {e}")
@@ -391,7 +394,9 @@ async def process_folder(folder_url: str, message: types.Message, state: FSMCont
                     # Скачивание
                     if not await download_from_google_drive(file_id, input_path):
                         return f"❌ {file_name} - ошибка скачивания"
-
+                    audio = AudioSegment.from_file(input_path)
+                    if len(audio) < 3000:
+                        return f"⚠️ {file_name} - слишком короткое аудио (<3 сек)"
                     # Если это видео - извлекаем аудио
                     if file['mimeType'].startswith('video/'):
                         audio_path = await extract_audio_from_video(input_path)
@@ -410,6 +415,7 @@ async def process_folder(folder_url: str, message: types.Message, state: FSMCont
 
                 except Exception as e:
                     logging.error(f"Ошибка обработки {file_name}: {e}")
+                    
                     return f"❌ {file_name} - ошибка: {str(e)}"
                 finally:
                     # Удаляем все временные файлы
@@ -453,7 +459,7 @@ async def process_folder(folder_url: str, message: types.Message, state: FSMCont
         return False
 
 # Функция записи в Google Sheets
-async def write_to_google_sheets(transcription_text: str, ai_response: str, file_name: str, username: str, sheet_n: int, state: FSMContext) -> int:
+async def write_to_google_sheets(transcription_text: str, ai_response: str, file_name: str, username: str, sheet_n: int, file_len: str, state: FSMContext) -> int:
     """Записывает данные в Google Sheets и возвращает номер строки"""
     try:
         user_data = await state.get_data()
@@ -483,6 +489,7 @@ async def write_to_google_sheets(transcription_text: str, ai_response: str, file
             f"https://t.me/{username}",
             user_data.get('company_name'),
             user_data.get('ass_token'),
+            file_len,
             phone,
             day,
             month,
