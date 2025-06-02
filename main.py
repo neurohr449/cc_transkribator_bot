@@ -522,7 +522,7 @@ async def company_name(callback_query: types.CallbackQuery, state: FSMContext):
         ass_token = os.getenv("OTHER_TOKEN")
     await state.update_data(ass_token=ass_token)
     await state.set_state(UserState.sheet_id_token)
-    await callback_query.message.answer_photo(photo=IMG, caption="Скопируйте данную таблицу. В ней будут отображаться записанные на собеседование кандидаты.\nhttps://docs.google.com/spreadsheets/d/1YiruDfMBpp075KMTmUG_dV2vomGZus5-82pkXPMu64k/edit?gid=0#gid=0\n\nОткройте настройки доступа, выберите в пункте \"Доступ пользователям, у которых есть ссылка\" режим \"Редактор\" и нажмите \"Готово\"\n\nИ пришлите ID таблицы в этот чат.\n\nГде найти ID таблицы, смотрите на картинке", disable_web_page_preview=True)
+    await callback_query.message.answer_photo(photo=IMG, caption="Скопируйте данную таблицу. В ней будут отображаться результаты обработки аудио.\nhttps://docs.google.com/spreadsheets/d/1YiruDfMBpp075KMTmUG_dV2vomGZus5-82pkXPMu64k/edit?gid=0#gid=0\n\nОткройте настройки доступа, выберите в пункте \"Доступ пользователям, у которых есть ссылка\" режим \"Редактор\" и нажмите \"Готово\"\n\nИ пришлите ID таблицы в этот чат.\n\nГде найти ID таблицы, смотрите на картинке", disable_web_page_preview=True)
 
 # @router.message(StateFilter(UserState.company_name))
 # async def ass_token(message: Message, state: FSMContext):
@@ -534,18 +534,18 @@ async def company_name(callback_query: types.CallbackQuery, state: FSMContext):
 async def ass_token(message: Message, state: FSMContext):
     await state.update_data(sheet_id_token=message.text)
     await state.set_state(UserState.audio_link)
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Файлами в этот чат", callback_data="tg_audio")],[InlineKeyboardButton(text="Сcылка на файлы Google Drive", callback_data="Gdrive_link")],[InlineKeyboardButton(text="Сcылка на папку Google Drive", callback_data="Gdrive_folder")]])
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Файлами в этот чат", callback_data="tg_audio")],[InlineKeyboardButton(text="Сcылка на файлы Google Drive", callback_data="gdrive_link")],[InlineKeyboardButton(text="Сcылка на папку Google Drive", callback_data="gdrive_folder")]])
     await message.answer(text="Выбери формат для загрузки", reply_markup=keyboard)
 
 
-@router.callback_query(StateFilter(UserState.sheet_id_token))
+@router.callback_query(StateFilter(UserState.audio_link))
 async def ass_token(callback_query: types.CallbackQuery, state: FSMContext):
     await state.set_state(UserState.audio)
     if callback_query.data == "tg_audio":
         await callback_query.message.answer("Присылай файлы")
-    elif callback_query.data == "Gdrive_link":
+    elif callback_query.data == "gdrive_link":
         await callback_query.message.answer("Присылай ссылки на файлы Google Drive по одной")
-    elif callback_query.data == "Gdrive_folder":
+    elif callback_query.data == "gdrive_folder":
         await callback_query.message.answer("Присылай ссылку на папку в Google Drive для оценки")
 
 @router.message(F.text, StateFilter(UserState.audio))
