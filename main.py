@@ -80,7 +80,9 @@ class UserState(StatesGroup):
     audio = State()
     folder_processing = State()
     sheet_id_token = State()
-
+class ImageUploadState(StatesGroup):
+    waiting_for_image = State()
+    
 # Middleware для отслеживания состояния
 class StateMiddleware(BaseMiddleware):
     async def __call__(self, handler, event: Message, data: dict):
@@ -184,22 +186,22 @@ async def list_files_in_folder(folder_id: str) -> List[dict]:
     return response.get('files', [])
 
 # Функции обработки аудио
-# async def safe_download_file(url: str, destination: str) -> bool:
-#     """Безопасное скачивание файла по URL"""
-#     for attempt in range(MAX_RETRIES):
-#         try:
-#             async with aiohttp.ClientSession() as session:
-#                 async with session.get(url) as response:
-#                     if response.status == 200:
-#                         async with aiofiles.open(destination, 'wb') as f:
-#                             await f.write(await response.read())
-#                         return True
-#         except (asyncio.TimeoutError, aiohttp.ClientError) as e:
-#             if attempt == MAX_RETRIES - 1:
-#                 raise
-#             await asyncio.sleep(2 * (attempt + 1))
-#             continue
-#     return False
+async def safe_download_file(url: str, destination: str) -> bool:
+    """Безопасное скачивание файла по URL"""
+    for attempt in range(MAX_RETRIES):
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as response:
+                    if response.status == 200:
+                        async with aiofiles.open(destination, 'wb') as f:
+                            await f.write(await response.read())
+                        return True
+        except (asyncio.TimeoutError, aiohttp.ClientError) as e:
+            if attempt == MAX_RETRIES - 1:
+                raise
+            await asyncio.sleep(2 * (attempt + 1))
+            continue
+    return False
 
 async def convert_audio(input_path: str) -> str:
     """Конвертирует аудио в MP3"""
@@ -518,21 +520,32 @@ async def company_name(callback_query: types.CallbackQuery, state: FSMContext):
     else:
         ass_token = os.getenv("OTHER_TOKEN")
     await state.update_data(ass_token=ass_token)
-    await state.set_state(UserState.company_name)
-    await callback_query.message.answer("Напиши название компании")
-
-@router.message(StateFilter(UserState.company_name))
-async def ass_token(message: Message, state: FSMContext):
-    await state.update_data(company_name=message.text)
     await state.set_state(UserState.sheet_id_token)
-    await message.answer("Присылай ID таблицы в которую нужно записать результат")
+    await callback_query.message.answer("Скопируйте данную таблицу. В ней будут отображаться записанные на собеседование кандидаты.\nhttps://docs.google.com/spreadsheets/d/1YiruDfMBpp075KMTmUG_dV2vomGZus5-82pkXPMu64k/edit?gid=0#gid=0\n\nОткройте настройки доступа, выберите в пункте \"Доступ пользователям, у которых есть ссылка\" режим \"Редактор\" и нажмите \"Готово\"\n\nИ пришлите ID таблицы в этот чат.\n\nГде найти ID таблицы, смотрите на картинке")
 
+# @router.message(StateFilter(UserState.company_name))
+# async def ass_token(message: Message, state: FSMContext):
+#     await state.update_data(company_name=message.text)
+#     await state.set_state(UserState.sheet_id_token)
+#     await message.answer("Скопируйте данную таблицу. В ней будут отображаться записанные на собеседование кандидаты.\nhttps://docs.google.com/spreadsheets/d/1YiruDfMBpp075KMTmUG_dV2vomGZus5-82pkXPMu64k/edit?gid=0#gid=0\n\nОткройте настройки доступа, выберите в пункте \"Доступ пользователям, у которых есть ссылка\" режим \"Редактор\" и нажмите \"Готово\"\n\nИ пришлите ID таблицы в этот чат.\n\nГде найти ID таблицы, смотрите на картинке")
 
 @router.message(StateFilter(UserState.sheet_id_token))
 async def ass_token(message: Message, state: FSMContext):
     await state.update_data(sheet_id_token=message.text)
     await state.set_state(UserState.audio)
-    await message.answer("Присылай ссылку на аудиофайл или папку в Google Drive для оценки")
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Файлами в этот чат", callback_data="tg_audio")],[InlineKeyboardButton(text="Сcылка на файлы Google Drive", callback_data="Gdrive_link")],[InlineKeyboardButton(text="Сcылка на папку Google Drive", callback_data="Gdrive_folder")]])
+    await message.answer(text="Выбери формат для загрузки", reply_markup=keyboard)
+
+
+@router.callback_query(StateFilter(UserState.sheet_id_token))
+async def ass_token(callback_query: types.CallbackQuery, state: FSMContext):
+    await state.set_state(UserState.audio)
+    if callback_query.data == "bfl":
+        await callback_query.message.answer("Присылай файлы")
+    elif callback_query.data == "bfl":
+        await callback_query.message.answer("Присылай ссылки на файлы Google Drive по одной")
+    else:
+        await callback_query.message.answer("Присылай ссылку на папку в Google Drive для оценки")
 
 @router.message(F.text, StateFilter(UserState.audio))
 async def handle_audio_link(message: types.Message, state: FSMContext):
@@ -581,6 +594,91 @@ async def handle_audio_link(message: types.Message, state: FSMContext):
             if path and os.path.exists(path):
                 try: os.remove(path)
                 except: pass
+
+
+
+
+@router.message(F.voice | F.audio | F.document, StateFilter(UserState.audio))
+async def handle_tg_audio(message: types.Message, state: FSMContext):
+    unique_id = uuid.uuid4().hex
+    input_path = None
+    output_path = None
+    
+    try:
+        # Определение типа файла
+        if message.voice:
+            file = await bot.get_file(message.voice.file_id)
+            ext = "ogg"
+            file_name = "Голосовое сообщение"
+        elif message.audio:
+            file = await bot.get_file(message.audio.file_id)
+            ext = "mp3"
+            file_name = message.audio.file_name or "Аудиофайл"
+        else:
+            if not message.document.mime_type.startswith('audio/'):
+                await message.reply("❌ Пожалуйста, отправьте аудиофайл")
+                return
+            file = await bot.get_file(message.document.file_id)
+            ext = os.path.splitext(message.document.file_name)[1][1:] or "mp3"
+            file_name = message.document.file_name
+        
+        input_path = f"temp_{unique_id}.{ext}"
+        
+        # Скачивание с обработкой ошибок
+        try:
+            if not await safe_download_file(file, input_path):
+                await message.reply("❌ Не удалось скачать файл после нескольких попыток")
+                return
+        except Exception as e:
+            await message.reply(f"❌ Ошибка скачивания файла: {str(e)}")
+            return
+        
+        # Проверка размера файла
+        if os.path.getsize(input_path) > 100 * 1024 * 1024:
+            os.remove(input_path)
+            await message.reply("❌ Файл слишком большой. Максимальный размер: 100MB")
+            return
+
+        await message.reply("🔍 Начинаю обработку аудио...")
+        
+        # Конвертация
+        output_path = await convert_audio(input_path)
+        if not output_path:
+            await message.reply("❌ Ошибка конвертации аудио")
+            return
+        
+        try:
+            row_number = await process_audio_file(output_path, file_name, message, state)
+            await message.reply(f"✅ Результат записан в строку {row_number}")
+        except Exception as e:
+            await message.reply(f"❌ Ошибка обработки: {str(e)}")
+            
+    except Exception as e:
+        logging.exception("Ошибка в handle_audio")
+        await message.reply("❌ Произошла непредвиденная ошибка при обработке файла")
+    finally:
+        # Гарантированная очистка временных файлов
+        for path in [input_path, output_path]:
+            if path and os.path.exists(path):
+                try:
+                    os.remove(path)
+                except Exception as e:
+                    logging.error(f"Ошибка удаления файла {path}: {e}")
+
+@router.message(Command("upload_image"))
+async def upload_image_command(message: types.Message, state: FSMContext):
+    await state.set_state(ImageUploadState.waiting_for_image)
+    await message.answer("Please send me an image, and I'll give you its file_id.")
+
+@router.message(ImageUploadState.waiting_for_image, lambda message: message.photo)
+async def handle_image_upload(message: types.Message, state: FSMContext):
+    file_id = message.photo[-1].file_id
+
+    await message.answer(f"Here is the file_id of your image:\n\n<code>{file_id}</code>\n\n"
+                         "You can use this file_id to send the image in your bot.")
+
+    await state.clear()
+
 
 # Запуск бота
 async def main() -> None:
