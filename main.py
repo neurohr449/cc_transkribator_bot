@@ -31,6 +31,8 @@ from googleapiclient.http import MediaIoBaseDownload
 import io
 from typing import List
 import time
+import ffmpeg
+
 
 # Конфигурация
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -73,6 +75,7 @@ class UserState(StatesGroup):
     company_name = State()
     audio = State()
     folder_processing = State()
+    sheet_id_token = State()
 
 # Middleware для отслеживания состояния
 class StateMiddleware(BaseMiddleware):
@@ -155,31 +158,14 @@ async def download_from_google_drive(file_id: str, destination: str) -> bool:
         return False
 
 async def list_files_in_folder(folder_id: str) -> List[dict]:
-    """Возвращает список аудиофайлов в указанной папке Google Drive"""
+    """Возвращает список аудио и видео файлов"""
     service = await get_google_drive_service()
-    results = []
-    page_token = None
-    
-    try:
-        while True:
-            response = service.files().list(
-                q=f"'{folder_id}' in parents and (mimeType contains 'audio/' or mimeType contains 'application/octet-stream')",
-                spaces='drive',
-                fields="nextPageToken, files(id, name, mimeType)",
-                pageToken=page_token,
-                pageSize=MAX_FILES_PER_FOLDER
-            ).execute()
-            
-            results.extend(response.get('files', []))
-            page_token = response.get('nextPageToken', None)
-            
-            if page_token is None or len(results) >= MAX_FILES_PER_FOLDER:
-                break
-                
-        return results[:MAX_FILES_PER_FOLDER]  # Ограничиваем максимальное количество файлов
-    except Exception as e:
-        logging.error(f"Ошибка при получении списка файлов: {e}")
-        raise
+    response = service.files().list(
+        q=f"'{folder_id}' in parents and (mimeType contains 'audio/' or mimeType contains 'video/' or mimeType contains 'application/octet-stream')",
+        fields="files(id, name, mimeType)",
+        pageSize=MAX_FILES_PER_FOLDER
+    ).execute()
+    return response.get('files', [])
 
 # Функции обработки аудио
 async def safe_download_file(url: str, destination: str) -> bool:
@@ -262,7 +248,8 @@ async def process_large_audio(file_path: str) -> str:
                     transcript = client.audio.transcriptions.create(
                         file=f,
                         model="whisper-1",
-                        language="ru"
+                        language="ru",
+                        prompt="Твоя задача транскрибировать аудио диалог между клиентом и оператором и выдать ответ в формате. Клиент:...   Оператор:... "
                     )
                     all_texts.append(transcript.text)
             finally:
@@ -274,6 +261,23 @@ async def process_large_audio(file_path: str) -> str:
         logging.error(f"Ошибка обработки большого файла: {e}")
         raise
 
+async def extract_audio_from_video(video_path: str) -> str:
+    """Извлекает аудио из видео в MP3 формат"""
+    audio_path = os.path.join(tempfile.gettempdir(), f"audio_{uuid.uuid4().hex}.mp3")
+    try:
+        video = AudioSegment.from_file(video_path)
+        video.set_channels(1).set_frame_rate(16000).export(
+            audio_path,
+            format="mp3",
+            bitrate="64k"
+        )
+        return audio_path
+    except Exception as e:
+        logging.error(f"Ошибка извлечения аудио: {e}")
+        if os.path.exists(audio_path):
+            os.remove(audio_path)
+        return None
+
 async def process_audio_file(file_path: str, file_name: str, message: types.Message, state: FSMContext) -> int:
     """Обрабатывает аудиофайл и возвращает номер строки в Google Sheets"""
     try:
@@ -284,7 +288,8 @@ async def process_audio_file(file_path: str, file_name: str, message: types.Mess
                 transcript = client.audio.transcriptions.create(
                     file=audio_file,
                     model="whisper-1",
-                    language="ru"
+                    language="ru",
+                    prompt="Твоя задача транскрибировать аудио диалог между клиентом и оператором и выдать ответ в формате. Клиент:...   Оператор:... "
                 )
             transcription_text = transcript.text
         else:
@@ -354,38 +359,39 @@ async def process_folder(folder_url: str, message: types.Message, state: FSMCont
         results = []
 
         async def process_single_file_wrapper(file: dict):
-            """Обертка для обработки одного файла с ограничением параллелизма"""
             async with concurrency_limit:
                 file_id = file['id']
                 file_name = file['name']
-                input_path = None
-                output_path = None
+                input_path = f"temp_{uuid.uuid4().hex}_{file_name}"
                 
                 try:
-                    # Скачивание файла
-                    unique_id = uuid.uuid4().hex
-                    ext = file_name.split('.')[-1] if '.' in file_name else 'mp3'
-                    input_path = f"temp_{unique_id}.{ext}"
-                    
+                    # Скачивание
                     if not await download_from_google_drive(file_id, input_path):
                         return f"❌ {file_name} - ошибка скачивания"
 
-                    # Конвертация
-                    output_path = await convert_audio(input_path)
-                    if not output_path:
-                        return f"❌ {file_name} - ошибка конвертации"
+                    # Если это видео - извлекаем аудио
+                    if file['mimeType'].startswith('video/'):
+                        audio_path = await extract_audio_from_video(input_path)
+                        if not audio_path:
+                            return f"❌ {file_name} - ошибка извлечения аудио"
+                        processing_path = audio_path
+                    else:
+                        # Для аудио - конвертируем в MP3 если нужно
+                        processing_path = await convert_audio(input_path) if not input_path.endswith('.mp3') else input_path
+                        if not processing_path:
+                            return f"❌ {file_name} - ошибка конвертации"
 
                     # Обработка
-                    row_number = await process_audio_file(output_path, file_name, message, state)
+                    row_number = await process_audio_file(processing_path, file_name, message, state)
                     return f"✅ {file_name} - строка {row_number}"
 
                 except Exception as e:
-                    logging.error(f"Ошибка обработки файла {file_name}: {e}")
+                    logging.error(f"Ошибка обработки {file_name}: {e}")
                     return f"❌ {file_name} - ошибка: {str(e)}"
                 finally:
-                    # Очистка временных файлов
-                    for path in [input_path, output_path]:
-                        if path and os.path.exists(path):
+                    # Удаляем все временные файлы
+                    for path in [input_path, processing_path if 'processing_path' in locals() else None]:
+                        if path and os.path.exists(path) and path != input_path:
                             try:
                                 os.remove(path)
                             except:
@@ -459,92 +465,78 @@ async def write_to_google_sheets(transcription_text: str, ai_response: str, file
 @router.message(CommandStart())
 async def command_start_handler(message: Message, state: FSMContext) -> None:
     await state.set_state(UserState.ass_token)
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="БФЛ", callback_data="bfl")],[InlineKeyboardButton(text="Другое", callback_data="other")]])
     await message.answer("👋 Добро пожаловать в наш чат-бот! Для начала нужен токен ассистента")
 
-@router.message(StateFilter(UserState.ass_token))
-async def company_name(message: Message, state: FSMContext):
-    await state.update_data(ass_token=message.text)
+@router.callback_query(StateFilter(UserState.ass_token))
+async def company_name(callback_query: types.CallbackQuery, state: FSMContext):
+    if callback_query.data == "bfl":
+        ass_token = os.getenv("BFL_TOKEN")
+    else:
+        ass_token = os.getenv("OTHER_TOKEN")
+        await state.update_data(ass_token=ass_token)
     await state.set_state(UserState.company_name)
-    await message.answer("Напиши название компании")
+    await callback_query.message.answer("Напиши название компании")
 
 @router.message(StateFilter(UserState.company_name))
 async def ass_token(message: Message, state: FSMContext):
     await state.update_data(company_name=message.text)
+    await state.set_state(UserState.sheet_id_token)
+    await message.answer("Присылай ID таблицы в которую нужно записать результат")
+
+
+@router.message(StateFilter(UserState.sheet_id_token))
+async def ass_token(message: Message, state: FSMContext):
     await state.set_state(UserState.audio)
     await message.answer("Присылай ссылку на аудиофайл или папку в Google Drive для оценки")
 
 @router.message(F.text, StateFilter(UserState.audio))
 async def handle_audio_link(message: types.Message, state: FSMContext):
-    """Обработчик ссылок на аудиофайлы и папки с конвертацией в MP3"""
     url = message.text.strip()
     
-    # Проверяем, является ли ссылка на Google Drive
-    if 'drive.google.com' not in url and 'docs.google.com' not in url:
-        await message.reply("❌ Пожалуйста, отправьте корректную ссылку на Google Drive")
+    if not any(x in url for x in ['drive.google.com', 'docs.google.com']):
+        await message.reply("❌ Пожалуйста, отправьте ссылку на Google Drive")
         return
     
-    # Проверяем, это ссылка на папку или файл
-    if 'folder' in url or 'drive.google.com/drive/folders' in url:
-        # Это папка - обрабатываем все файлы
+    if 'folder' in url or '/folders/' in url:
         await process_folder(url, message, state)
         return
     
-    # Обработка отдельного файла
     file_id = extract_file_id_from_url(url)
     if not file_id:
-        await message.reply("❌ Не удалось извлечь ID файла из ссылки")
+        await message.reply("❌ Не удалось извлечь ID файла")
         return
     
-    unique_id = uuid.uuid4().hex
-    input_path = None
-    output_path = None
-    
+    temp_path = f"temp_{uuid.uuid4().hex}"
     try:
-        # Скачиваем файл
-        ext = "mp3"  # Всегда используем MP3 как промежуточный формат
-        input_path = f"temp_{unique_id}.{ext}"
-        
-        await message.reply("⏳ Скачиваю файл из Google Drive...")
-        if not await download_from_google_drive(file_id, input_path):
-            await message.reply("❌ Не удалось скачать файл из Google Drive")
-            return
-        
-        # Проверка размера (лимит 1GB для исходного файла)
-        if os.path.getsize(input_path) > 1024 * 1024 * 1024:
-            os.remove(input_path)
-            await message.reply("❌ Файл слишком большой. Максимальный размер: 1GB")
+        # Скачивание
+        await message.reply("⏳ Скачиваю файл...")
+        if not await download_from_google_drive(file_id, temp_path):
+            await message.reply("❌ Ошибка скачивания")
             return
 
-        # Конвертация (если нужно)
-        if not input_path.endswith('.mp3'):
-            output_path = await convert_audio(input_path)
-            if not output_path:
-                await message.reply("❌ Ошибка конвертации аудио")
-                return
-            processing_path = output_path
-        else:
-            processing_path = input_path
-
-        # Обработка файла
-        await message.reply("🔍 Начинаю обработку аудио...")
-        try:
-            file_name = f"Аудиофайл_{file_id[:8]}"
-            row_number = await process_audio_file(processing_path, file_name, message, state)
-            await message.reply(f"✅ Результат записан в строку {row_number}")
-        except Exception as e:
-            await message.reply(f"❌ Ошибка обработки: {str(e)}")
+        # Определяем тип файла
+        is_video = any(temp_path.endswith(ext) for ext in ['.mp4', '.mov', '.avi'])
+        
+        # Обработка
+        await message.reply("🔍 Извлекаю аудио..." if is_video else "🔍 Обрабатываю аудио...")
+        audio_path = await extract_audio_from_video(temp_path) if is_video else await convert_audio(temp_path)
+        
+        if not audio_path:
+            await message.reply("❌ Ошибка обработки аудио")
+            return
             
+        row_number = await process_audio_file(audio_path, "Видеофайл" if is_video else "Аудиофайл", message, state)
+        await message.reply(f"✅ Результат записан в строку {row_number}")
+        
     except Exception as e:
-        logging.exception("Ошибка в handle_audio_link")
-        await message.reply("❌ Произошла непредвиденная ошибка при обработке файла")
+        logging.error(f"Ошибка: {e}")
+        await message.reply(f"❌ Ошибка: {str(e)}")
     finally:
-        # Удаляем временные файлы
-        for path in [input_path, output_path]:
+        for path in [temp_path, audio_path if 'audio_path' in locals() else None]:
             if path and os.path.exists(path):
-                try:
-                    os.remove(path)
-                except Exception as e:
-                    logging.error(f"Ошибка удаления файла {path}: {e}")
+                try: os.remove(path)
+                except: pass
 
 # Запуск бота
 async def main() -> None:
