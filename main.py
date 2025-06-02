@@ -298,7 +298,7 @@ async def process_audio_file(file_path: str, file_name: str, message: types.Mess
     try:
         audio = AudioSegment.from_file(file_path)
         file_size = os.path.getsize(file_path)
-        file_len = len(audio)/1000
+        file_len = round(len(audio) / 1000)  
         if file_size <= MAX_FILE_SIZE:
             with open(file_path, "rb") as audio_file:
                 transcript = client.audio.transcriptions.create(
@@ -396,7 +396,7 @@ async def process_folder(folder_url: str, message: types.Message, state: FSMCont
                         return f"❌ {file_name} - ошибка скачивания"
                     audio = AudioSegment.from_file(input_path)
                     if len(audio) < 3000:
-                        return f"⚠️ {file_name} - слишком короткое аудио (<3 сек)"
+                        return f"⚠️ {file_name} - слишком короткое аудио (меньше 3 сек)"
                     # Если это видео - извлекаем аудио
                     if file['mimeType'].startswith('video/'):
                         audio_path = await extract_audio_from_video(input_path)
