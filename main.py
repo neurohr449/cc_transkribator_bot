@@ -636,13 +636,16 @@ async def handle_tg_audio(message: types.Message, state: FSMContext):
             await message.reply(f"❌ Ошибка скачивания файла: {str(e)}")
             return
         
-        # Определяем тип файла
-        is_video = any(input_path.endswith(ext) for ext in ['.mp4', '.mov', '.avi'])
-
-        if is_video:
-            audio_path = await extract_audio_from_video(input_path)  
-            input_path = audio_path
-
+        try:
+            # Определяем тип файла
+            is_video = any(input_path.endswith(ext) for ext in ['.mp4', '.mov', '.avi'])
+        
+            if is_video:
+                audio_path = await extract_audio_from_video(input_path)  
+                input_path = audio_path
+        except Exception as e:
+            await message.reply(f"❌ Ошибка извлечения: {str(e)}")
+            return
         # Проверка размера файла
         if os.path.getsize(input_path) > 100 * 1024 * 1024:
             os.remove(input_path)
