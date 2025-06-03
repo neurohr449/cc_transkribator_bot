@@ -38,11 +38,10 @@ import ffmpeg
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 client2 = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-BFL_TOKEN = os.getenv("")
 MAX_FILE_SIZE = 24 * 1024 * 1024  
 CHUNK_DURATION = 180 
 DOWNLOAD_TIMEOUT = 1200 
-MAX_RETRIES = 3  
+MAX_RETRIES = 10  
 MAX_FILES_PER_FOLDER = 1000  # Максимальное количество файлов для обработки из одной папки
 IMG = "AgACAgIAAxkBAAO4aD2DBZsntEbv4pCVKjSi-Rg8JUkAAvPzMRuH3OlJMKrGXBeky5IBAAMCAAN4AAM2BA"
 
@@ -67,6 +66,7 @@ session = AiohttpSession(timeout=aiohttp.ClientTimeout(total=DOWNLOAD_TIMEOUT))
 bot = Bot(
     token=BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    timeout=300,
     session_timeout=DOWNLOAD_TIMEOUT  
 )
 storage = MemoryStorage()
