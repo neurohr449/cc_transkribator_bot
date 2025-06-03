@@ -40,7 +40,7 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 client2 = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 MAX_FILE_SIZE = 24 * 1024 * 1024  
 CHUNK_DURATION = 180 
-DOWNLOAD_TIMEOUT = 300 
+DOWNLOAD_TIMEOUT = 600 
 MAX_RETRIES = 3  
 MAX_FILES_PER_FOLDER = 1000  # Максимальное количество файлов для обработки из одной папки
 IMG = "AgACAgIAAxkBAAO4aD2DBZsntEbv4pCVKjSi-Rg8JUkAAvPzMRuH3OlJMKrGXBeky5IBAAMCAAN4AAM2BA"
@@ -584,7 +584,7 @@ async def handle_audio_link(message: types.Message, state: FSMContext):
 
 @router.message(F.voice | F.audio | F.document | F.video, StateFilter(UserState.audio))
 async def handle_tg_audio(message: types.Message, state: FSMContext):
-    concurrency_limit = asyncio.Semaphore(3)
+    concurrency_limit = asyncio.Semaphore(1)
     async with concurrency_limit:
         unique_id = uuid.uuid4().hex
         input_path = None
@@ -620,6 +620,7 @@ async def handle_tg_audio(message: types.Message, state: FSMContext):
                     await message.reply("❌ Не удалось скачать файл после нескольких попыток")
                     return
             except Exception as e:
+                logging.error(f"Ошибка удаления файла {input_path}: {e}")
                 await message.reply(f"❌ Ошибка скачивания файла: {str(e)}")
                 return
             
