@@ -41,7 +41,7 @@ client2 = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 MAX_FILE_SIZE = 24 * 1024 * 1024  
 CHUNK_DURATION = 180 
 DOWNLOAD_TIMEOUT = 600 
-MAX_RETRIES = 3  
+MAX_RETRIES = 10  
 MAX_FILES_PER_FOLDER = 1000  # Максимальное количество файлов для обработки из одной папки
 IMG = "AgACAgIAAxkBAAO4aD2DBZsntEbv4pCVKjSi-Rg8JUkAAvPzMRuH3OlJMKrGXBeky5IBAAMCAAN4AAM2BA"
 
