@@ -495,7 +495,6 @@ async def write_to_google_sheets(transcription_text: str, ai_response: str, file
         logging.error(f"Ошибка записи в Google Sheets: {str(e)}")
         raise Exception(f"Ошибка записи в таблицу: {str(e)}")
 
-# Обработчики команд
 @router.message(CommandStart())
 async def command_start_handler(message: Message, state: FSMContext) -> None:
     await state.set_state(UserState.ass_token)
