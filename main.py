@@ -66,6 +66,7 @@ session = AiohttpSession(timeout=aiohttp.ClientTimeout(total=DOWNLOAD_TIMEOUT))
 bot = Bot(
     token=BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    timeout=300,
     session_timeout=DOWNLOAD_TIMEOUT  
 )
 storage = MemoryStorage()
@@ -373,7 +374,7 @@ async def process_folder(folder_url: str, message: types.Message, state: FSMCont
         await message.reply(f"🔍 Найдено {total_files} файлов. Начинаю обработку...")
 
         # Создаем семафор для ограничения одновременных задач (3-5 в зависимости от сервера)
-        concurrency_limit = asyncio.Semaphore(3)
+        concurrency_limit = asyncio.Semaphore(10)
         results = []
 
         async def process_single_file_wrapper(file: dict):
@@ -582,9 +583,17 @@ async def handle_audio_link(message: types.Message, state: FSMContext):
 
 
 
-@router.message(F.voice | F.audio | F.document | F.video, StateFilter(UserState.audio))
+@router.message(F.voice | F.audio | F.document | F.video | F.media_group_id.is_not(None), StateFilter(UserState.audio))
 async def handle_tg_audio(message: types.Message, state: FSMContext):
-    concurrency_limit = asyncio.Semaphore(1)
+    
+    # Проверяем, не обрабатывалась ли уже эта медиагруппа
+    if message.media_group_id:
+        async with state.proxy() as data:
+            processed_groups = data.setdefault("processed_media_groups", set())
+            if message.media_group_id in processed_groups:
+                return
+            processed_groups.add(message.media_group_id)
+    concurrency_limit = asyncio.Semaphore(10)
     async with concurrency_limit:
         unique_id = uuid.uuid4().hex
         input_path = None
