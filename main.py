@@ -464,38 +464,54 @@ async def write_to_google_sheets(transcription_text: str, ai_response: str, file
     """Записывает данные в Google Sheets и возвращает номер строки"""
     try:
         user_data = await state.get_data()
-        
+        promt = f"Твоя задача проанализировать название файла и написать ответ строго в заданном формате, если данных недостаточно вместо отсутствующих данных напиши Empty, сохраняя формат сообщения. Дополнительно для выдачи номера телефона используй следующие данные: Номер телефона всегда должен начинатся на +7 (если в названии файла это 8 или 7 замени на +7). Формат для выдачи номера телефона: +7 999 999-99-99  Название файла для анализа{file_name} Ответ дай строго в формате: День/Месяц/Год/Номер телефона"
+        raw_response = await get_chatgpt_response(promt)
+        print(raw_response)
+        day, month, year, phone = raw_response.split('/')
+
         scope = ['https://www.googleapis.com/auth/spreadsheets',
                'https://www.googleapis.com/auth/drive']
         creds = ServiceAccountCredentials.from_json_keyfile_dict(GOOGLE_DRIVE_CREDS, scope)
         gc = gspread.authorize(creds)
         if sheet_n == 1:
             spreadsheet = gc.open_by_key(os.getenv("GSHEETS_SPREADSHEET_ID"))
-        else:
-            spreadsheet = gc.open_by_key(user_data.get("sheet_id_token"))
-        worksheet = spreadsheet.worksheet(os.getenv("GSHEETS_SHEET_NAME", "Sheet1"))
-
-        promt = f"Твоя задача проанализировать название файла и написать ответ строго в заданном формате, если данных недостаточно вместо отсутствующих данных напиши Empty, сохраняя формат сообщения. Дополнительно для выдачи номера телефона используй следующие данные: Номер телефона всегда должен начинатся на +7 (если в названии файла это 8 или 7 замени на +7). Формат для выдачи номера телефона: +7 999 999-99-99  Название файла для анализа{file_name} Ответ дай строго в формате: День/Месяц/Год/Номер телефона"
-        raw_response = await get_chatgpt_response(promt)
-        print(raw_response)
-        day, month, year, phone = raw_response.split('/')
-
-
-        row_data = [
+            row_data = [
             (datetime.now() + timedelta(hours=3)).strftime("%Y-%m-%d %H:%M:%S"),
             str(transcription_text),
             str(ai_response),
             str(file_name),
             f"@{username}",
             f"https://t.me/{username}",
-#           user_data.get('company_name'),
+            "",
             user_data.get('ass_token'),
             file_len,
             phone,
             day,
             month,
             year
-        ]
+            ]
+        else:
+            spreadsheet = gc.open_by_key(user_data.get("sheet_id_token"))
+            row_data = [
+            (datetime.now() + timedelta(hours=3)).strftime("%Y-%m-%d %H:%M:%S"),
+            str(transcription_text),
+            str(ai_response),
+            str(file_name),
+            f"@{username}",
+            f"https://t.me/{username}",
+            user_data.get('ass_token'),
+            file_len,
+            phone,
+            day,
+            month,
+            year
+            ]
+        worksheet = spreadsheet.worksheet(os.getenv("GSHEETS_SHEET_NAME", "Sheet1"))
+
+        
+
+
+        
 
         worksheet.append_row(row_data)
         return len(worksheet.col_values(1))
@@ -508,8 +524,8 @@ async def write_to_google_sheets(transcription_text: str, ai_response: str, file
 @router.message(CommandStart())
 async def command_start_handler(message: Message, state: FSMContext) -> None:
     await state.set_state(UserState.ass_token)
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="БФЛ", callback_data="bfl")],[InlineKeyboardButton(text="Другое", callback_data="other")]])
-    await message.answer(text="👋 Добро пожаловать в наш чат-бот! Ваша компания занимаеться БФЛ или у вас другая сфера?", reply_markup=keyboard)
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Другое", callback_data="other")],[InlineKeyboardButton(text="БФЛ", callback_data="bfl")]])
+    await message.answer(text="👋 Добро пожаловать в наш чат-бот! Ваша компания занимаеться БФЛ или вам нужна общая оценка?", reply_markup=keyboard)
 
 @router.callback_query(StateFilter(UserState.ass_token))
 async def company_name(callback_query: types.CallbackQuery, state: FSMContext):
@@ -597,92 +613,103 @@ async def handle_audio_link(message: types.Message, state: FSMContext):
 
 
 
-@router.message(F.voice | F.audio | F.document | F.video, StateFilter(UserState.audio))
+@router.message(F.voice | F.audio | F.document | F.video | F.media_group_id.is_not(None), StateFilter(UserState.audio))
 async def handle_tg_audio(message: types.Message, state: FSMContext):
-    unique_id = uuid.uuid4().hex
-    input_path = None
-    output_path = None
     
-    try:
-        # Определение типа файла
-        if message.voice:
-            file = await bot.get_file(message.voice.file_id)
-            ext = "ogg"
-            file_name = "Голосовое сообщение"
-        elif message.audio:
-            file = await bot.get_file(message.audio.file_id)
-            ext = "mp3"
-            file_name = message.audio.file_name or "Аудиофайл"
-        elif message.video:
-            file = await bot.get_file(message.video.file_id)
-            ext = "mp4"
-            file_name = message.video.file_name or "Видеофайл"
-        else:
-            if not message.document.mime_type.startswith('audio/'):
-                await message.reply("❌ Пожалуйста, отправьте аудиофайл")
+    # Проверяем, не обрабатывалась ли уже эта медиагруппа
+    if message.media_group_id:
+        async with state.proxy() as data:
+            processed_groups = data.setdefault("processed_media_groups", set())
+            if message.media_group_id in processed_groups:
                 return
-            file = await bot.get_file(message.document.file_id)
-            ext = os.path.splitext(message.document.file_name)[1][1:] or "mp3"
-            file_name = message.document.file_name
-        
-        input_path = f"temp_{unique_id}.{ext}"
-        
-        # Скачивание с обработкой ошибок
-        try:
-            if not await safe_download_file(file, input_path):
-                await message.reply("❌ Не удалось скачать файл после нескольких попыток")
-                return
-        except Exception as e:
-            await message.reply(f"❌ Ошибка скачивания файла: {str(e)}")
-            return
+            processed_groups.add(message.media_group_id)
+    concurrency_limit = asyncio.Semaphore(10)
+    async with concurrency_limit:
+        unique_id = uuid.uuid4().hex
+        input_path = None
+        output_path = None
         
         try:
-            # Определяем тип файла
-            is_video = any(input_path.endswith(ext) for ext in ['.mp4', '.mov', '.avi'])
-        
-            if is_video:
-                audio_path = await extract_audio_from_video(input_path)  
-                input_path = audio_path
-        except Exception as e:
-            await message.reply(f"❌ Ошибка извлечения: {str(e)}")
-            return
-        # Проверка размера файла
-        if os.path.getsize(input_path) > 100 * 1024 * 1024:
-            os.remove(input_path)
-            await message.reply("❌ Файл слишком большой. Максимальный размер: 100MB")
-            return
-
-                
-        if ext != "mp3":
-            output_path = await convert_audio(input_path)
-            if not output_path:
-                await message.reply("❌ Ошибка конвертации аудио")
-                return
-        else:
-            output_path = input_path
-
-        audio = AudioSegment.from_file(output_path)
-        duration_ms = len(audio)
-        if duration_ms < 3000:  # 3 секунды = 3000 мс
-            await message.reply("❌ Слишком короткое аудио (меньше 3 секунд)")
-            return
-        try:
-            row_number = await process_audio_file(output_path, file_name, message, state)
-            await message.reply(f"✅ Результат записан в строку {row_number}")            
-        except Exception as e:
-            await message.reply(f"❌ Ошибка обработки: {str(e)}")
+            # Определение типа файла
+            if message.voice:
+                file = await bot.get_file(message.voice.file_id)
+                ext = "ogg"
+                file_name = "Голосовое сообщение"
+            elif message.audio:
+                file = await bot.get_file(message.audio.file_id)
+                ext = "mp3"
+                file_name = message.audio.file_name or "Аудиофайл"
+            elif message.video:
+                file = await bot.get_file(message.video.file_id)
+                ext = "mp4"
+                file_name = message.video.file_name or "Видеофайл"
+            else:
+                if not message.document.mime_type.startswith('audio/'):
+                    await message.reply("❌ Пожалуйста, отправьте аудиофайл")
+                    return
+                file = await bot.get_file(message.document.file_id)
+                ext = os.path.splitext(message.document.file_name)[1][1:] or "mp3"
+                file_name = message.document.file_name
             
-    except Exception as e:
-        logging.exception("Ошибка в handle_audio")
-        await message.reply("❌ Произошла непредвиденная ошибка при обработке файла")
-    finally:
-        # Гарантированная очистка временных файлов
-        for path in [input_path, output_path]:
-            if path and os.path.exists(path):
-                try:
-                    os.remove(path)
-                except Exception as e:
-                    logging.error(f"Ошибка удаления файла {path}: {e}")
+            input_path = f"temp_{unique_id}.{ext}"
+            
+            # Скачивание с обработкой ошибок
+            try:
+                if not await safe_download_file(file, input_path):
+                    await message.reply("❌ Не удалось скачать файл после нескольких попыток")
+                    return
+            except Exception as e:
+                logging.error(f"Ошибка удаления файла {input_path}: {e}")
+                await message.reply(f"❌ Ошибка скачивания файла: {str(e)}")
+                return
+            
+            try:
+                # Определяем тип файла
+                is_video = any(input_path.endswith(ext) for ext in ['.mp4', '.mov', '.avi'])
+            
+                if is_video:
+                    audio_path = await extract_audio_from_video(input_path)  
+                    input_path = audio_path
+            except Exception as e:
+                await message.reply(f"❌ Ошибка извлечения: {str(e)}")
+                return
+            # Проверка размера файла
+            if os.path.getsize(input_path) > 100 * 1024 * 1024:
+                os.remove(input_path)
+                await message.reply("❌ Файл слишком большой. Максимальный размер: 100MB")
+                return
+
+                    
+            if ext != "mp3":
+                output_path = await convert_audio(input_path)
+                if not output_path:
+                    await message.reply("❌ Ошибка конвертации аудио")
+                    return
+            else:
+                output_path = input_path
+
+            audio = AudioSegment.from_file(output_path)
+            duration_ms = len(audio)
+            if duration_ms < 3000:  # 3 секунды = 3000 мс
+                await message.reply("❌ Слишком короткое аудио (меньше 3 секунд)")
+                return
+            try:
+                row_number = await process_audio_file(output_path, file_name, message, state)
+                await message.reply(f"✅ Результат записан в строку {row_number}")            
+            except Exception as e:
+                await message.reply(f"❌ Ошибка обработки: {str(e)}")
+                
+        except Exception as e:
+            logging.exception("Ошибка в handle_audio")
+            await message.reply("❌ Произошла непредвиденная ошибка при обработке файла")
+        finally:
+            # Гарантированная очистка временных файлов
+            for path in [input_path, output_path]:
+                if path and os.path.exists(path):
+                    try:
+                        os.remove(path)
+                    except Exception as e:
+                        logging.error(f"Ошибка удаления файла {path}: {e}")
 
 # @router.message(Command("upload_image"))
 # async def upload_image_command(message: types.Message, state: FSMContext):
