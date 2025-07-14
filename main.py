@@ -38,8 +38,8 @@ import ffmpeg
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 client2 = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-MAX_FILE_SIZE = 24 * 1024 * 1024  
-CHUNK_DURATION = 180 
+MAX_FILE_SIZE = 20 * 1024 * 1024  
+CHUNK_DURATION = 120 
 DOWNLOAD_TIMEOUT = 600 
 MAX_RETRIES = 10  
 MAX_FILES_PER_FOLDER = 1000  # Максимальное количество файлов для обработки из одной папки
