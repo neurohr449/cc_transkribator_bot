@@ -15,6 +15,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from aiogram.exceptions import TelegramBadRequest
 from openai import OpenAI, AsyncOpenAI
 from pydub import AudioSegment  
 import tempfile
@@ -187,40 +188,40 @@ async def list_files_in_folder(folder_id: str) -> List[dict]:
     return response.get('files', [])
 
 
-# async def safe_download_file(file: types.File, destination: str) -> bool:
-#     """Безопасное скачивание файла с повторными попытками"""
-#     for attempt in range(MAX_RETRIES):
-#         try:
-#             await bot.download(file, destination=destination)
-#             return True
-#         except (asyncio.TimeoutError, aiohttp.ClientError) as e:
-#             if attempt == MAX_RETRIES - 1:
-#                 raise
-#             await asyncio.sleep(2 * (attempt + 1))
-#             continue
-#         except Exception as e:
-#             raise
-#     return False
-
-
-
-async def safe_download_file(file_url: str, destination: str) -> bool:
-    """Скачивает файл по прямому URL Telegram."""
+async def safe_download_file(file: types.File, destination: str) -> bool:
+    """Безопасное скачивание файла с повторными попытками"""
     for attempt in range(MAX_RETRIES):
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(file_url) as resp:
-                    if resp.status == 200:
-                        with open(destination, 'wb') as f:
-                            async for chunk in resp.content.iter_chunked(1024*1024):
-                                f.write(chunk)
-                        return True
-                    raise aiohttp.ClientError(f"HTTP {resp.status}")
+            await bot.download(file, destination=destination)
+            return True
         except (asyncio.TimeoutError, aiohttp.ClientError) as e:
             if attempt == MAX_RETRIES - 1:
                 raise
             await asyncio.sleep(2 * (attempt + 1))
+            continue
+        except Exception as e:
+            raise
     return False
+
+
+
+# async def safe_download_file(file_url: str, destination: str) -> bool:
+#     """Скачивает файл по прямому URL Telegram."""
+#     for attempt in range(MAX_RETRIES):
+#         try:
+#             async with aiohttp.ClientSession() as session:
+#                 async with session.get(file_url) as resp:
+#                     if resp.status == 200:
+#                         with open(destination, 'wb') as f:
+#                             async for chunk in resp.content.iter_chunked(1024*1024):
+#                                 f.write(chunk)
+#                         return True
+#                     raise aiohttp.ClientError(f"HTTP {resp.status}")
+#         except (asyncio.TimeoutError, aiohttp.ClientError) as e:
+#             if attempt == MAX_RETRIES - 1:
+#                 raise
+#             await asyncio.sleep(2 * (attempt + 1))
+#     return False
 
 async def convert_audio(input_path: str) -> str:
     """Конвертирует аудио в MP3"""
@@ -620,36 +621,42 @@ async def handle_tg_audio(message: types.Message, state: FSMContext):
         output_path = None
         
         try:
+            try:
             # Определение типа файла
-            if message.voice:
-                file_id = message.voice.file_id
-                ext = "ogg"
-                file_name = "Голосовое сообщение"
-            elif message.audio:
-                file_id = message.audio.file_id
-                ext = "mp3"
-                file_name = message.audio.file_name or "Аудиофайл"
-            elif message.video:
-                file_id = message.video.file_id
-                ext = "mp4"
-                file_name = message.video.file_name or "Видеофайл"
-            else:
-                if not message.document.mime_type.startswith('audio/'):
-                    await message.reply("❌ Пожалуйста, отправьте аудиофайл")
+                if message.voice:
+                    file = await bot.get_file(message.voice.file_id)
+                    ext = "ogg"
+                    file_name = "Голосовое сообщение"
+                elif message.audio:
+                    file = await bot.get_file(message.audio.file_id)
+                    ext = "mp3"
+                    file_name = message.audio.file_name or "Аудиофайл"
+                elif message.video:
+                    file = await bot.get_file(message.video.file_id)
+                    ext = "mp4"
+                    file_name = message.video.file_name or "Видеофайл"
+                else:
+                    if not message.document.mime_type.startswith('audio/'):
+                        await message.reply("❌ Пожалуйста, отправьте аудиофайл")
+                        return
+            except TelegramBadRequest as e:
+            
+                if "file is too big" in str(e):
+                    await message.reply("📁 Файл слишком большой для автоматической обработки. "
+                                    "Пожалуйста, загрузите его в сжатом виде (<20 МБ) "
+                                    "или используйте ссылку на файл.")
                     return
-                file_id = message.document.file_id
-                ext = os.path.splitext(message.document.file_name)[1][1:] or "mp3"
-                file_name = message.document.file_name
+                raise  # Если ошибка не связана с размером файла
 
-            # Формируем file_path без вызова get_file()
-            file_path = f"{file_id[:2]}/{file_id[2:4]}/{file_id[4:]}"
-            file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
+            file = await bot.get_file(message.document.file_id)
+            ext = os.path.splitext(message.document.file_name)[1][1:] or "mp3"
+            file_name = message.document.file_name
             
             input_path = f"temp_{unique_id}.{ext}"
             
             # Скачивание с обработкой ошибок
             try:
-                if not await safe_download_file(file_url, input_path):
+                if not await safe_download_file(file, input_path):
                     await message.reply("❌ Не удалось скачать файл после нескольких попыток")
                     return
             except Exception as e:
