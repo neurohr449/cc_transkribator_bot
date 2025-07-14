@@ -204,30 +204,22 @@ async def list_files_in_folder(folder_id: str) -> List[dict]:
 
 
 
-async def safe_download_file(file: types.File, destination: str) -> bool:
-    """Безопасное скачивание файла с повторными попытками через прямой URL"""
+async def safe_download_file(file_url: str, destination: str) -> bool:
+    """Скачивает файл по прямому URL Telegram."""
     for attempt in range(MAX_RETRIES):
         try:
-            # Получаем прямой URL для скачивания
-            file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file.file_path}"
-            
             async with aiohttp.ClientSession() as session:
                 async with session.get(file_url) as resp:
                     if resp.status == 200:
                         with open(destination, 'wb') as f:
-                            async for chunk in resp.content.iter_chunked(1024*1024):  # 1MB chunks
+                            async for chunk in resp.content.iter_chunked(1024*1024):
                                 f.write(chunk)
                         return True
-                    else:
-                        raise aiohttp.ClientError(f"HTTP status {resp.status}")
-            
+                    raise aiohttp.ClientError(f"HTTP {resp.status}")
         except (asyncio.TimeoutError, aiohttp.ClientError) as e:
             if attempt == MAX_RETRIES - 1:
                 raise
             await asyncio.sleep(2 * (attempt + 1))
-            continue
-        except Exception as e:
-            raise
     return False
 
 async def convert_audio(input_path: str) -> str:
@@ -630,30 +622,34 @@ async def handle_tg_audio(message: types.Message, state: FSMContext):
         try:
             # Определение типа файла
             if message.voice:
-                file = await bot.get_file(message.voice.file_id)
+                file_id = message.voice.file_id
                 ext = "ogg"
                 file_name = "Голосовое сообщение"
             elif message.audio:
-                file = await bot.get_file(message.audio.file_id)
+                file_id = message.audio.file_id
                 ext = "mp3"
                 file_name = message.audio.file_name or "Аудиофайл"
             elif message.video:
-                file = await bot.get_file(message.video.file_id)
+                file_id = message.video.file_id
                 ext = "mp4"
                 file_name = message.video.file_name or "Видеофайл"
             else:
                 if not message.document.mime_type.startswith('audio/'):
                     await message.reply("❌ Пожалуйста, отправьте аудиофайл")
                     return
-                file = await bot.get_file(message.document.file_id)
+                file_id = message.document.file_id
                 ext = os.path.splitext(message.document.file_name)[1][1:] or "mp3"
                 file_name = message.document.file_name
+
+            # Формируем file_path без вызова get_file()
+            file_path = f"{file_id[:2]}/{file_id[2:4]}/{file_id[4:]}"
+            file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
             
             input_path = f"temp_{unique_id}.{ext}"
             
             # Скачивание с обработкой ошибок
             try:
-                if not await safe_download_file(file, input_path):
+                if not await safe_download_file(file_url, input_path):
                     await message.reply("❌ Не удалось скачать файл после нескольких попыток")
                     return
             except Exception as e:
