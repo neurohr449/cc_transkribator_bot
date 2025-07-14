@@ -621,33 +621,33 @@ async def handle_tg_audio(message: types.Message, state: FSMContext):
         output_path = None
         
         try:
-            try:
-            # Определение типа файла
-                if message.voice:
-                    file = await bot.get_file(message.voice.file_id)
-                    ext = "ogg"
-                    file_name = "Голосовое сообщение"
-                elif message.audio:
-                    file = await bot.get_file(message.audio.file_id)
-                    ext = "mp3"
-                    file_name = message.audio.file_name or "Аудиофайл"
-                elif message.video:
-                    file = await bot.get_file(message.video.file_id)
-                    ext = "mp4"
-                    file_name = message.video.file_name or "Видеофайл"
-                else:
-                    if not message.document.mime_type.startswith('audio/'):
-                        await message.reply("❌ Пожалуйста, отправьте аудиофайл")
-                        return
-            except TelegramBadRequest as e:
             
-                if "file is too big" in str(e):
-                    await message.reply("📁 Файл слишком большой для автоматической обработки. "
-                                    "Пожалуйста, загрузите его в сжатом виде (<20 МБ) "
-                                    "или используйте ссылку на файл.")
+        # Определение типа файла
+            if message.voice:
+                file = await bot.get_file(message.voice.file_id)
+                ext = "ogg"
+                file_name = "Голосовое сообщение"
+            elif message.audio:
+                file = await bot.get_file(message.audio.file_id)
+                ext = "mp3"
+                file_name = message.audio.file_name or "Аудиофайл"
+            elif message.video:
+                file = await bot.get_file(message.video.file_id)
+                ext = "mp4"
+                file_name = message.video.file_name or "Видеофайл"
+            else:
+                if not message.document.mime_type.startswith('audio/'):
+                    await message.reply("❌ Пожалуйста, отправьте аудиофайл")
                     return
-                raise  # Если ошибка не связана с размером файла
-
+        except TelegramBadRequest as e:
+        
+            if "file is too big" in str(e):
+                await message.reply("📁 Файл слишком большой для автоматической обработки. "
+                                "Пожалуйста, загрузите его в сжатом виде (<20 МБ) "
+                                "или используйте ссылку на файл.")
+                return
+            raise  # Если ошибка не связана с размером файла
+        try:
             file = await bot.get_file(message.document.file_id)
             ext = os.path.splitext(message.document.file_name)[1][1:] or "mp3"
             file_name = message.document.file_name
