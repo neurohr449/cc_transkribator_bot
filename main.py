@@ -606,7 +606,6 @@ async def handle_audio_link(message: types.Message, state: FSMContext):
 
 @router.message(F.voice | F.audio | F.document | F.video | F.media_group_id.is_not(None), StateFilter(UserState.audio))
 async def handle_tg_audio(message: types.Message, state: FSMContext):
-    
     # Проверяем, не обрабатывалась ли уже эта медиагруппа
     if message.media_group_id:
         async with state.proxy() as data:
@@ -614,6 +613,7 @@ async def handle_tg_audio(message: types.Message, state: FSMContext):
             if message.media_group_id in processed_groups:
                 return
             processed_groups.add(message.media_group_id)
+    
     concurrency_limit = asyncio.Semaphore(10)
     async with concurrency_limit:
         unique_id = uuid.uuid4().hex
@@ -621,36 +621,34 @@ async def handle_tg_audio(message: types.Message, state: FSMContext):
         output_path = None
         
         try:
-            
-        # Определение типа файла
-            if message.voice:
-                file = await bot.get_file(message.voice.file_id)
-                ext = "ogg"
-                file_name = "Голосовое сообщение"
-            elif message.audio:
-                file = await bot.get_file(message.audio.file_id)
-                ext = "mp3"
-                file_name = message.audio.file_name or "Аудиофайл"
-            elif message.video:
-                file = await bot.get_file(message.video.file_id)
-                ext = "mp4"
-                file_name = message.video.file_name or "Видеофайл"
-            else:
-                if not message.document.mime_type.startswith('audio/'):
-                    await message.reply("❌ Пожалуйста, отправьте аудиофайл")
+            # Определение типа файла
+            try:
+                if message.voice:
+                    file = await bot.get_file(message.voice.file_id)
+                    ext = "ogg"
+                    file_name = "Голосовое сообщение"
+                elif message.audio:
+                    file = await bot.get_file(message.audio.file_id)
+                    ext = "mp3"
+                    file_name = message.audio.file_name or "Аудиофайл"
+                elif message.video:
+                    file = await bot.get_file(message.video.file_id)
+                    ext = "mp4"
+                    file_name = message.video.file_name or "Видеофайл"
+                else:
+                    if not message.document.mime_type.startswith('audio/'):
+                        await message.reply("❌ Пожалуйста, отправьте аудиофайл")
+                        return
+                    file = await bot.get_file(message.document.file_id)
+                    ext = os.path.splitext(message.document.file_name)[1][1:] or "mp3"
+                    file_name = message.document.file_name
+            except TelegramBadRequest as e:
+                if "file is too big" in str(e):
+                    await message.reply("📁 Файл слишком большой для автоматической обработки. "
+                                      "Пожалуйста, загрузите его в сжатом виде (<20 МБ) "
+                                      "или используйте ссылку на файл.")
                     return
-        except TelegramBadRequest as e:
-        
-            if "file is too big" in str(e):
-                await message.reply("📁 Файл слишком большой для автоматической обработки. "
-                                "Пожалуйста, загрузите его в сжатом виде (<20 МБ) "
-                                "или используйте ссылку на файл.")
-                return
-            raise  # Если ошибка не связана с размером файла
-        try:
-            file = await bot.get_file(message.document.file_id)
-            ext = os.path.splitext(message.document.file_name)[1][1:] or "mp3"
-            file_name = message.document.file_name
+                raise
             
             input_path = f"temp_{unique_id}.{ext}"
             
@@ -660,7 +658,7 @@ async def handle_tg_audio(message: types.Message, state: FSMContext):
                     await message.reply("❌ Не удалось скачать файл после нескольких попыток")
                     return
             except Exception as e:
-                logging.error(f"Ошибка удаления файла {input_path}: {e}")
+                logging.error(f"Ошибка скачивания файла {input_path}: {e}")
                 await message.reply(f"❌ Ошибка скачивания файла: {str(e)}")
                 return
             
@@ -674,13 +672,13 @@ async def handle_tg_audio(message: types.Message, state: FSMContext):
             except Exception as e:
                 await message.reply(f"❌ Ошибка извлечения: {str(e)}")
                 return
+            
             # Проверка размера файла
             if os.path.getsize(input_path) > 100 * 1024 * 1024:
                 os.remove(input_path)
                 await message.reply("❌ Файл слишком большой. Максимальный размер: 100MB")
                 return
 
-                    
             if ext != "mp3":
                 output_path = await convert_audio(input_path)
                 if not output_path:
@@ -694,6 +692,7 @@ async def handle_tg_audio(message: types.Message, state: FSMContext):
             if duration_ms < 3000:  # 3 секунды = 3000 мс
                 await message.reply("❌ Слишком короткое аудио (меньше 3 секунд)")
                 return
+                
             try:
                 row_number = await process_audio_file(output_path, file_name, message, state)
                 await message.reply(f"✅ Результат записан в строку {row_number}")            
@@ -702,7 +701,6 @@ async def handle_tg_audio(message: types.Message, state: FSMContext):
                 
         except Exception as e:
             logging.exception("Ошибка в handle_audio")
-            print(e)
             await message.reply("❌ Произошла ошибка при обработке файла")
         finally:
             # Гарантированная очистка временных файлов
