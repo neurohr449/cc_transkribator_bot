@@ -186,13 +186,41 @@ async def list_files_in_folder(folder_id: str) -> List[dict]:
     ).execute()
     return response.get('files', [])
 
-# Функции обработки аудио
+
+# async def safe_download_file(file: types.File, destination: str) -> bool:
+#     """Безопасное скачивание файла с повторными попытками"""
+#     for attempt in range(MAX_RETRIES):
+#         try:
+#             await bot.download(file, destination=destination)
+#             return True
+#         except (asyncio.TimeoutError, aiohttp.ClientError) as e:
+#             if attempt == MAX_RETRIES - 1:
+#                 raise
+#             await asyncio.sleep(2 * (attempt + 1))
+#             continue
+#         except Exception as e:
+#             raise
+#     return False
+
+
+
 async def safe_download_file(file: types.File, destination: str) -> bool:
-    """Безопасное скачивание файла с повторными попытками"""
+    """Безопасное скачивание файла с повторными попытками через прямой URL"""
     for attempt in range(MAX_RETRIES):
         try:
-            await bot.download(file, destination=destination)
-            return True
+            # Получаем прямой URL для скачивания
+            file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file.file_path}"
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(file_url) as resp:
+                    if resp.status == 200:
+                        with open(destination, 'wb') as f:
+                            async for chunk in resp.content.iter_chunked(1024*1024):  # 1MB chunks
+                                f.write(chunk)
+                        return True
+                    else:
+                        raise aiohttp.ClientError(f"HTTP status {resp.status}")
+            
         except (asyncio.TimeoutError, aiohttp.ClientError) as e:
             if attempt == MAX_RETRIES - 1:
                 raise
