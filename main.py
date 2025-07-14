@@ -671,7 +671,8 @@ async def handle_tg_audio(message: types.Message, state: FSMContext):
                 
         except Exception as e:
             logging.exception("Ошибка в handle_audio")
-            await message.reply("❌ Произошла непредвиденная ошибка при обработке файла")
+            print(e)
+            await message.reply("❌ Произошла ошибка при обработке файла")
         finally:
             # Гарантированная очистка временных файлов
             for path in [input_path, output_path]:
