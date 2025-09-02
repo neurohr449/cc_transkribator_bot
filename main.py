@@ -32,7 +32,8 @@ import io
 from typing import List
 import time
 import ffmpeg
-
+from logging.handlers import TimedRotatingFileHandler
+from pathlib import Path
 
 # Конфигурация
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -572,8 +573,8 @@ async def company_name(callback_query: types.CallbackQuery, state: FSMContext):
         await callback_query.message.answer_photo(photo=IMG, caption="Скопируйте данную таблицу. В ней будут отображаться результаты обработки аудио.\nhttps://docs.google.com/spreadsheets/d/1YiruDfMBpp075KMTmUG_dV2vomGZus5-82pkXPMu64k/edit?gid=0#gid=0\n\nОткройте настройки доступа, выберите в пункте \"Доступ пользователям, у которых есть ссылка\" режим \"Редактор\" и нажмите \"Готово\"\n\nИ пришлите ID таблицы в этот чат.\n\nГде найти ID таблицы, смотрите на картинке", disable_web_page_preview=True)
     except Exception as e:
             logger.error(
-                f"Error for user {message.from_user.id}: {e}\n"
-                f"Message: {message.text}"
+                f"Error for user {callback_query.from_user.id}: {e}\n"
+                f"Message: {callback_query.data}"
             )
 
 @router.message(StateFilter(UserState.sheet_id_token))
