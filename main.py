@@ -592,7 +592,7 @@ async def ass_token(message: Message, state: FSMContext):
             )
 
 @router.callback_query(StateFilter(UserState.audio_link))
-async def ass_token(callback_query: types.CallbackQuery, state: FSMContext):
+async def ass_token_2(callback_query: types.CallbackQuery, state: FSMContext):
     logger.info(f"User {callback_query.from_user.id} sent message {callback_query.data}")
     try:
         await state.set_state(UserState.audio)
