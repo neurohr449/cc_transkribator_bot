@@ -61,6 +61,30 @@ GOOGLE_DRIVE_CREDS = {
     "universe_domain": os.getenv("UNIVERSE_DOMAIN", "googleapis.com")
 }
 
+log_dir = Path("logs")
+log_dir.mkdir(exist_ok=True)
+
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[
+        logging.StreamHandler(sys.stdout),  
+        TimedRotatingFileHandler(
+            filename=str(log_dir / 'bot.log'),  
+            when='midnight',     
+            interval=1,          
+            backupCount=7,       
+            encoding='utf-8',
+            utc=False            
+        )
+    ]
+)
+
+
+logger = logging.getLogger("transcribator_bot_2")
+
 # Инициализация бота
 session = AiohttpSession(timeout=aiohttp.ClientTimeout(total=DOWNLOAD_TIMEOUT))
 bot = Bot(
@@ -113,7 +137,7 @@ async def get_chatgpt_response(prompt: str) -> str:
         )
         return response.choices[0].message.content
     except Exception as e:
-        logging.error(f"OpenAI error: {e}")
+        logger.error(f"OpenAI error: {e}")
         return "Извините, не удалось обработать запрос"  
 
 def extract_file_id_from_url(url: str) -> str:
@@ -154,7 +178,7 @@ def extract_file_id_from_url(url: str) -> str:
         
         return None
     except Exception as e:
-        logging.error(f"Error extracting ID from URL: {e}")
+        logger.error(f"Error extracting ID from URL: {e}")
         return None
 
 async def download_from_google_drive(file_id: str, destination: str) -> bool:
@@ -169,11 +193,11 @@ async def download_from_google_drive(file_id: str, destination: str) -> bool:
         done = False
         while not done:
             status, done = downloader.next_chunk()
-            logging.info(f"Download {int(status.progress() * 100)}%.")
+            logger.info(f"Download {int(status.progress() * 100)}%.")
         
         return True
     except Exception as e:
-        logging.error(f"Ошибка загрузки из Google Drive: {e}")
+        logger.error(f"Ошибка загрузки из Google Drive: {e}")
         return False
 
 async def list_files_in_folder(folder_id: str) -> List[dict]:
@@ -225,7 +249,7 @@ async def convert_audio(input_path: str) -> str:
             
         return output_path
     except Exception as e:
-        logging.error(f"Ошибка конвертации: {e}")
+        logger.error(f"Ошибка конвертации: {e}")
         if os.path.exists(output_path):
             os.remove(output_path)
         return None
@@ -274,7 +298,7 @@ async def process_large_audio(file_path: str) -> str:
         
         return "\n\n".join(f"🔹 Часть {i+1}/{num_chunks}:\n{text}" for i, text in enumerate(all_texts))
     except Exception as e:
-        logging.error(f"Ошибка обработки большого файла: {e}")
+        logger.error(f"Ошибка обработки большого файла: {e}")
         raise
 
 async def extract_audio_from_video(video_path: str) -> str:
@@ -289,7 +313,7 @@ async def extract_audio_from_video(video_path: str) -> str:
         )
         return audio_path
     except Exception as e:
-        logging.error(f"Ошибка извлечения аудио: {e}")
+        logger.error(f"Ошибка извлечения аудио: {e}")
         if os.path.exists(audio_path):
             os.remove(audio_path)
         return None
@@ -359,7 +383,7 @@ async def process_audio_file(file_path: str, file_name: str, message: types.Mess
             file_len=str(file_len)
         )
     except Exception as e:
-        logging.error(f"Ошибка обработки файла: {e}")
+        logger.error(f"Ошибка обработки файла: {e}")
         raise
 
 async def process_folder(folder_url: str, message: types.Message, state: FSMContext):
@@ -415,7 +439,7 @@ async def process_folder(folder_url: str, message: types.Message, state: FSMCont
                     return f"✅ {file_name} - строка {row_number}"
 
                 except Exception as e:
-                    logging.error(f"Ошибка обработки {file_name}: {e}")
+                    logger.error(f"Ошибка обработки {file_name}: {e}")
                     
                     return f"❌ {file_name} - ошибка: {str(e)}"
                 finally:
@@ -455,7 +479,7 @@ async def process_folder(folder_url: str, message: types.Message, state: FSMCont
         return True
 
     except Exception as e:
-        logging.error(f"Ошибка при обработке папки: {e}")
+        logger.error(f"Ошибка при обработке папки: {e}")
         await message.reply(f"❌ Произошла критическая ошибка при обработке папки: {e}")
         return False
 
@@ -517,53 +541,75 @@ async def write_to_google_sheets(transcription_text: str, ai_response: str, file
         return len(worksheet.col_values(1))
     
     except Exception as e:
-        logging.error(f"Ошибка записи в Google Sheets: {str(e)}")
+        logger.error(f"Ошибка записи в Google Sheets: {str(e)}")
         raise Exception(f"Ошибка записи в таблицу: {str(e)}")
 
 # Обработчики команд
 @router.message(CommandStart())
 async def command_start_handler(message: Message, state: FSMContext) -> None:
-    await state.set_state(UserState.ass_token)
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Другое", callback_data="other")],[InlineKeyboardButton(text="БФЛ", callback_data="bfl")]])
-    await message.answer(text="👋 Добро пожаловать в наш чат-бот! Ваша компания занимаеться БФЛ или вам нужна общая оценка?", reply_markup=keyboard)
+    logger.info(f"User {message.from_user.id} sent message {message.text}")
+    try:
+        await state.set_state(UserState.ass_token)
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Другое", callback_data="other")],[InlineKeyboardButton(text="БФЛ", callback_data="bfl")]])
+        await message.answer(text="👋 Добро пожаловать в наш чат-бот! Ваша компания занимаеться БФЛ или вам нужна общая оценка?", reply_markup=keyboard)
+    except Exception as e:
+            logger.error(
+                f"Error for user {message.from_user.id}: {e}\n"
+                f"Message: {message.text}"
+            )
 
 @router.callback_query(StateFilter(UserState.ass_token))
 async def company_name(callback_query: types.CallbackQuery, state: FSMContext):
-    if callback_query.data == "bfl":
-        ass_token = os.getenv("BFL_TOKEN")
-        
-    else:
-        ass_token = os.getenv("OTHER_TOKEN")
-    await state.update_data(ass_token=ass_token)
-    await state.set_state(UserState.sheet_id_token)
-    await callback_query.message.answer_photo(photo=IMG, caption="Скопируйте данную таблицу. В ней будут отображаться результаты обработки аудио.\nhttps://docs.google.com/spreadsheets/d/1YiruDfMBpp075KMTmUG_dV2vomGZus5-82pkXPMu64k/edit?gid=0#gid=0\n\nОткройте настройки доступа, выберите в пункте \"Доступ пользователям, у которых есть ссылка\" режим \"Редактор\" и нажмите \"Готово\"\n\nИ пришлите ID таблицы в этот чат.\n\nГде найти ID таблицы, смотрите на картинке", disable_web_page_preview=True)
-
-# @router.message(StateFilter(UserState.company_name))
-# async def ass_token(message: Message, state: FSMContext):
-#     await state.update_data(company_name=message.text)
-#     await state.set_state(UserState.sheet_id_token)
-#     await message.answer("Скопируйте данную таблицу. В ней будут отображаться записанные на собеседование кандидаты.\nhttps://docs.google.com/spreadsheets/d/1YiruDfMBpp075KMTmUG_dV2vomGZus5-82pkXPMu64k/edit?gid=0#gid=0\n\nОткройте настройки доступа, выберите в пункте \"Доступ пользователям, у которых есть ссылка\" режим \"Редактор\" и нажмите \"Готово\"\n\nИ пришлите ID таблицы в этот чат.\n\nГде найти ID таблицы, смотрите на картинке")
+    logger.info(f"User {callback_query.from_user.id} sent message {callback_query.data}")
+    try:
+        if callback_query.data == "bfl":
+            ass_token = os.getenv("BFL_TOKEN")
+            
+        else:
+            ass_token = os.getenv("OTHER_TOKEN")
+        await state.update_data(ass_token=ass_token)
+        await state.set_state(UserState.sheet_id_token)
+        await callback_query.message.answer_photo(photo=IMG, caption="Скопируйте данную таблицу. В ней будут отображаться результаты обработки аудио.\nhttps://docs.google.com/spreadsheets/d/1YiruDfMBpp075KMTmUG_dV2vomGZus5-82pkXPMu64k/edit?gid=0#gid=0\n\nОткройте настройки доступа, выберите в пункте \"Доступ пользователям, у которых есть ссылка\" режим \"Редактор\" и нажмите \"Готово\"\n\nИ пришлите ID таблицы в этот чат.\n\nГде найти ID таблицы, смотрите на картинке", disable_web_page_preview=True)
+    except Exception as e:
+            logger.error(
+                f"Error for user {message.from_user.id}: {e}\n"
+                f"Message: {message.text}"
+            )
 
 @router.message(StateFilter(UserState.sheet_id_token))
 async def ass_token(message: Message, state: FSMContext):
-    await state.update_data(sheet_id_token=message.text)
-    await state.set_state(UserState.audio_link)
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Файлами в этот чат", callback_data="tg_audio")],[InlineKeyboardButton(text="Сcылка на файлы Google Drive", callback_data="gdrive_link")],[InlineKeyboardButton(text="Сcылка на папку Google Drive", callback_data="gdrive_folder")]])
-    await message.answer(text="Выбери формат для загрузки", reply_markup=keyboard)
-
+    logger.info(f"User {message.from_user.id} sent message {message.text}")
+    try:
+        await state.update_data(sheet_id_token=message.text)
+        await state.set_state(UserState.audio_link)
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Файлами в этот чат", callback_data="tg_audio")],[InlineKeyboardButton(text="Сcылка на файлы Google Drive", callback_data="gdrive_link")],[InlineKeyboardButton(text="Сcылка на папку Google Drive", callback_data="gdrive_folder")]])
+        await message.answer(text="Выбери формат для загрузки", reply_markup=keyboard)
+    except Exception as e:
+            logger.error(
+                f"Error for user {message.from_user.id}: {e}\n"
+                f"Message: {message.text}"
+            )
 
 @router.callback_query(StateFilter(UserState.audio_link))
 async def ass_token(callback_query: types.CallbackQuery, state: FSMContext):
-    await state.set_state(UserState.audio)
-    if callback_query.data == "tg_audio":
-        await callback_query.message.answer("Присылай файлы")
-    elif callback_query.data == "gdrive_link":
-        await callback_query.message.answer("Присылай ссылки на файлы Google Drive по одной")
-    elif callback_query.data == "gdrive_folder":
-        await callback_query.message.answer("Присылай ссылку на папку в Google Drive для оценки")
+    logger.info(f"User {callback_query.from_user.id} sent message {callback_query.data}")
+    try:
+        await state.set_state(UserState.audio)
+        if callback_query.data == "tg_audio":
+            await callback_query.message.answer("Присылай файлы")
+        elif callback_query.data == "gdrive_link":
+            await callback_query.message.answer("Присылай ссылки на файлы Google Drive по одной")
+        elif callback_query.data == "gdrive_folder":
+            await callback_query.message.answer("Присылай ссылку на папку в Google Drive для оценки")
+    except Exception as e:
+            logger.error(
+                f"Error for user {callback_query.from_user.id}: {e}\n"
+                f"Message: {callback_query.data}"
+            )
 
 @router.message(F.text, StateFilter(UserState.audio))
 async def handle_audio_link(message: types.Message, state: FSMContext):
+    logger.info(f"User {message.from_user.id} sent message {message.text}")
     url = message.text.strip()
     
     if not any(x in url for x in ['drive.google.com', 'docs.google.com']):
@@ -602,7 +648,7 @@ async def handle_audio_link(message: types.Message, state: FSMContext):
         await message.reply(f"✅ Результат записан в строку {row_number}")
         
     except Exception as e:
-        logging.error(f"Ошибка: {e}")
+        logger.error(f"Ошибка: {e}")
         await message.reply(f"❌ Ошибка: {str(e)}")
     finally:
         for path in [temp_path, audio_path if 'audio_path' in locals() else None]:
@@ -615,7 +661,7 @@ async def handle_audio_link(message: types.Message, state: FSMContext):
 
 @router.message(F.voice | F.audio | F.document | F.video | F.media_group_id.is_not(None), StateFilter(UserState.audio))
 async def handle_tg_audio(message: types.Message, state: FSMContext):
-    
+    logger.info(f"User {message.from_user.id} sent message {message.text}")
     # Проверяем, не обрабатывалась ли уже эта медиагруппа
     if message.media_group_id:
         async with state.proxy() as data:
@@ -659,7 +705,7 @@ async def handle_tg_audio(message: types.Message, state: FSMContext):
                     await message.reply("❌ Не удалось скачать файл после нескольких попыток")
                     return
             except Exception as e:
-                logging.error(f"Ошибка удаления файла {input_path}: {e}")
+                logger.error(f"Ошибка удаления файла {input_path}: {e}")
                 await message.reply(f"❌ Ошибка скачивания файла: {str(e)}")
                 return
             
@@ -700,7 +746,7 @@ async def handle_tg_audio(message: types.Message, state: FSMContext):
                 await message.reply(f"❌ Ошибка обработки: {str(e)}")
                 
         except Exception as e:
-            logging.exception("Ошибка в handle_audio")
+            logger.exception(f"Ошибка в handle_audio: {e}")
             await message.reply("❌ Произошла непредвиденная ошибка при обработке файла")
         finally:
             # Гарантированная очистка временных файлов
@@ -709,7 +755,7 @@ async def handle_tg_audio(message: types.Message, state: FSMContext):
                     try:
                         os.remove(path)
                     except Exception as e:
-                        logging.error(f"Ошибка удаления файла {path}: {e}")
+                        logger.error(f"Ошибка удаления файла {path}: {e}")
 
 # @router.message(Command("upload_image"))
 # async def upload_image_command(message: types.Message, state: FSMContext):
